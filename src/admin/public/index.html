@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OneClaw Admin Console</title>
+    <link rel="stylesheet" href="/admin/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <h1>OneClaw</h1>
+        <p>Phase 4 Admin Console</p>
+        <label class="token-block">
+          <span>Admin token</span>
+          <input id="token" type="password" placeholder="x-oneclaw-admin-token" />
+        </label>
+        <button id="refresh">Refresh</button>
+      </aside>
+      <main class="main">
+        <section class="hero">
+          <h2>Operations overview</h2>
+          <div id="stats" class="stats"></div>
+        </section>
+        <section class="grid">
+          <div class="panel">
+            <div class="panel-header"><h3>Pending approvals</h3></div>
+            <div id="approvals"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h3>Recent tasks</h3></div>
+            <div id="tasks"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/admin/assets/app.js" type="module"></script>
+  </body>
+</html>
