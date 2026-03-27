@@ -23,6 +23,10 @@ export interface TaskStore {
 export declare class InMemoryTaskStore implements TaskStore {
     private readonly tasks;
     private readonly approvals;
+    private readonly taskQueue;
+    private readonly approvalQueue;
+    private readonly taskCreateQueue;
+    private readonly approvalCreateQueue;
     create(params: Omit<TaskRunRecord, "id" | "createdAt" | "updatedAt">): Promise<TaskRunRecord>;
     get(taskId: string): Promise<TaskRunRecord | undefined>;
     list(params?: {
@@ -42,4 +46,12 @@ export declare class InMemoryTaskStore implements TaskStore {
         decisionNote?: string;
     }): Promise<ApprovalRecord>;
     getStats(): Promise<TaskStoreStats>;
+    private mergeStepResults;
+    private cloneCreateTaskParams;
+    private cloneCreateApprovalParams;
+    private cloneTaskRecord;
+    private cloneApprovalRecord;
+    private cloneStep;
+    private cloneJsonRecord;
+    private deepClone;
 }

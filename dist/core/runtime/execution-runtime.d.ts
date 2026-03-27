@@ -10,7 +10,22 @@ export declare class ExecutionRuntime {
     private readonly policy;
     private readonly taskStore;
     private readonly sessionManager;
+    private readonly options;
     constructor(capabilities: CapabilityRegistry, workers: WorkerRegistry, policy: PolicyEngine, taskStore: TaskStore, sessionManager: SessionManager);
     runTask(taskId: string, task: NormalizedTaskDefinition): Promise<TaskRunRecord>;
+    private processStep;
+    private handleApprovalRequirement;
+    private executeWorkerWithRetry;
+    private executeWorkerWithTimeout;
     private failStep;
+    private restoreStepStateFromRecord;
+    private selectSafeParallelBatch;
+    private getStepResourceKeys;
+    private getRetryPolicy;
+    private getTimeoutMs;
+    private withTimeout;
+    private delay;
+    private toStringArray;
+    private toJsonRecord;
+    private toJsonValue;
 }
