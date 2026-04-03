@@ -14,25 +14,25 @@ export declare const taskDefinitionSchema: z.ZodObject<{
         id: string;
         action: string;
         metadata?: Record<string, any> | undefined;
+        timeoutMs?: number | undefined;
         input?: Record<string, any> | undefined;
         dependsOn?: string[] | undefined;
-        timeoutMs?: number | undefined;
     }, {
         id: string;
         action: string;
         metadata?: Record<string, any> | undefined;
+        timeoutMs?: number | undefined;
         input?: Record<string, any> | undefined;
         dependsOn?: string[] | undefined;
-        timeoutMs?: number | undefined;
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
     steps: {
         id: string;
         action: string;
         metadata?: Record<string, any> | undefined;
+        timeoutMs?: number | undefined;
         input?: Record<string, any> | undefined;
         dependsOn?: string[] | undefined;
-        timeoutMs?: number | undefined;
     }[];
     taskName: string;
     approvalMode?: "auto" | "manual" | undefined;
@@ -42,9 +42,9 @@ export declare const taskDefinitionSchema: z.ZodObject<{
         id: string;
         action: string;
         metadata?: Record<string, any> | undefined;
+        timeoutMs?: number | undefined;
         input?: Record<string, any> | undefined;
         dependsOn?: string[] | undefined;
-        timeoutMs?: number | undefined;
     }[];
     taskName: string;
     approvalMode?: "auto" | "manual" | undefined;

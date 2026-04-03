@@ -1,3 +1,18 @@
+function asString(value) {
+    return String(value ?? "").trim();
+}
+function asOptionalString(value) {
+    const text = String(value ?? "").trim();
+    return text ? text : undefined;
+}
+function asStringArray(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const items = value
+        .map((item) => String(item ?? "").trim())
+        .filter((item) => item.length > 0);
+    return items.length ? items : undefined;
+}
 export class SocialWorker {
     xAdapter;
     name = "social_worker";
@@ -5,26 +20,56 @@ export class SocialWorker {
         this.xAdapter = xAdapter;
     }
     async execute(input, context) {
-        await context.log(`SocialWorker executing ${context.action}`);
-        const channel = String(input.channel ?? "x");
-        if (channel === "x") {
-            const mediaPaths = Array.isArray(input.mediaPaths)
-                ? input.mediaPaths.map((item) => String(item))
-                : undefined;
+        const action = asString(context.action).toLowerCase();
+        const channel = asString(input.channel || "x").toLowerCase();
+        await context.log(`SocialWorker executing action=${action || "unknown"} channel=${channel}`);
+        try {
+            if (channel !== "x") {
+                return {
+                    ok: false,
+                    error: `Unsupported social channel: ${channel}`,
+                };
+            }
+            const content = asString(input.content);
+            if (!content) {
+                return {
+                    ok: false,
+                    error: "Missing social content",
+                };
+            }
+            const replyToTweetId = asOptionalString(input.replyToTweetId);
+            const mediaPaths = asStringArray(input.mediaPaths);
+            await context.log(`SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"}`);
             const response = await this.xAdapter.createPost({
-                text: String(input.content ?? ""),
-                replyToTweetId: input.replyToTweetId ? String(input.replyToTweetId) : undefined,
+                text: content,
+                replyToTweetId,
                 mediaPaths,
             });
+            const responseJson = typeof response === "object" && response !== null
+                ? response
+                : {
+                    value: String(response),
+                };
+            await context.log("SocialWorker X post completed");
             return {
                 ok: true,
                 output: {
                     published: true,
                     channel,
-                    response: response,
+                    content,
+                    replyToTweetId: replyToTweetId ?? null,
+                    mediaCount: mediaPaths?.length ?? 0,
+                    response: responseJson,
                 },
             };
         }
-        return { ok: false, error: `Unsupported social channel: ${channel}` };
+        catch (error) {
+            const message = error instanceof Error ? error.message : "Social worker failed";
+            await context.log(`SocialWorker failed: ${message}`);
+            return {
+                ok: false,
+                error: message,
+            };
+        }
     }
 }

@@ -1,30 +1,122 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium, } from "playwright";
+function asTrimmed(value) {
+    return String(value ?? "").trim();
+}
+function sanitizeFileName(value) {
+    return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
 export class PlaywrightBrowserAdapter {
     options;
     constructor(options) {
         this.options = options;
     }
     async launch() {
-        const browser = await chromium.launch({ headless: this.options.headless });
+        const browser = await chromium.launch({
+            headless: this.options.headless,
+        });
         const context = await browser.newContext();
         const page = await context.newPage();
         page.setDefaultTimeout(this.options.timeoutMs);
         return { browser, context, page };
     }
+    async close(session) {
+        try {
+            if (session.page && !session.page.isClosed()) {
+                await session.page.close();
+            }
+        }
+        catch {
+            // ignore page close errors
+        }
+        try {
+            if (session.context) {
+                await session.context.close();
+            }
+        }
+        catch {
+            // ignore context close errors
+        }
+        try {
+            if (session.browser) {
+                await session.browser.close();
+            }
+        }
+        catch {
+            // ignore browser close errors
+        }
+    }
+    async goto(page, url, options) {
+        const targetUrl = asTrimmed(url);
+        if (!targetUrl) {
+            throw new Error("Browser URL is required");
+        }
+        await page.goto(targetUrl, {
+            waitUntil: options?.waitUntil ?? "domcontentloaded",
+            timeout: options?.timeoutMs ?? this.options.timeoutMs,
+        });
+    }
     async screenshot(page, taskId, stepId, requestedPath, fullPage = true) {
-        const safeName = requestedPath ?? `${taskId}-${stepId}.png`;
-        const resolved = path.resolve(this.options.artifactsDir, safeName);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        await page.screenshot({ path: resolved, fullPage });
-        return resolved;
+        const safeTaskId = sanitizeFileName(asTrimmed(taskId) || "task");
+        const safeStepId = sanitizeFileName(asTrimmed(stepId) || "step");
+        const fileName = requestedPath
+            ? sanitizeFileName(asTrimmed(requestedPath))
+            : `${safeTaskId}-${safeStepId}.png`;
+        const resolvedPath = path.resolve(this.options.artifactsDir, fileName);
+        fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+        await page.screenshot({
+            path: resolvedPath,
+            fullPage,
+        });
+        return resolvedPath;
     }
     async scrape(page, selector, mode = "text") {
-        if (!selector) {
-            return mode === "html" ? await page.content() : await page.locator("body").innerText();
+        const normalizedSelector = asTrimmed(selector);
+        if (!normalizedSelector) {
+            if (mode === "html") {
+                return page.content();
+            }
+            return page.locator("body").innerText();
         }
-        const locator = page.locator(selector).first();
-        return mode === "html" ? await locator.innerHTML() : await locator.innerText();
+        const locator = page.locator(normalizedSelector).first();
+        const count = await locator.count();
+        if (count === 0) {
+            throw new Error(`Browser selector not found: ${normalizedSelector}`);
+        }
+        if (mode === "html") {
+            return locator.innerHTML();
+        }
+        return locator.innerText();
+    }
+    async extractPage(page, options) {
+        const selector = asTrimmed(options?.selector);
+        const includeHtml = Boolean(options?.includeHtml);
+        const maxTextLength = options?.maxTextLength ?? 5000;
+        const title = await page.title();
+        const url = page.url();
+        let text;
+        let html;
+        if (selector) {
+            text = await this.scrape(page, selector, "text");
+            if (includeHtml) {
+                html = await this.scrape(page, selector, "html");
+            }
+        }
+        else {
+            text = await this.scrape(page, undefined, "text");
+            if (includeHtml) {
+                html = await this.scrape(page, undefined, "html");
+            }
+        }
+        if (text.length > maxTextLength) {
+            text = text.slice(0, maxTextLength);
+        }
+        return {
+            url,
+            title,
+            text,
+            html,
+        };
     }
 }

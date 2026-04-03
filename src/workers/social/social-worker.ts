@@ -1,35 +1,105 @@
-import type { ExecutionContext, Worker, WorkerExecutionResult } from "../../types/capability.js";
+import type {
+  ExecutionContext,
+  Worker,
+  WorkerExecutionResult,
+} from "../../types/capability.js";
 import type { Json } from "../../types/task.js";
 import { XAdapter } from "../../adapters/x/x-adapter.js";
+
+function asString(value: Json | undefined): string {
+  return String(value ?? "").trim();
+}
+
+function asOptionalString(value: Json | undefined): string | undefined {
+  const text = String(value ?? "").trim();
+  return text ? text : undefined;
+}
+
+function asStringArray(value: Json | undefined): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const items = value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+
+  return items.length ? items : undefined;
+}
 
 export class SocialWorker implements Worker {
   readonly name = "social_worker";
 
   constructor(private readonly xAdapter: XAdapter) {}
 
-  async execute(input: Record<string, Json>, context: ExecutionContext): Promise<WorkerExecutionResult> {
-    await context.log(`SocialWorker executing ${context.action}`);
-    const channel = String(input.channel ?? "x");
+  async execute(
+    input: Record<string, Json>,
+    context: ExecutionContext,
+  ): Promise<WorkerExecutionResult> {
+    const action = asString(context.action).toLowerCase();
+    const channel = asString(input.channel || "x").toLowerCase();
 
-    if (channel === "x") {
-      const mediaPaths = Array.isArray(input.mediaPaths)
-        ? input.mediaPaths.map((item) => String(item))
-        : undefined;
+    await context.log(
+      `SocialWorker executing action=${action || "unknown"} channel=${channel}`,
+    );
+
+    try {
+      if (channel !== "x") {
+        return {
+          ok: false,
+          error: `Unsupported social channel: ${channel}`,
+        };
+      }
+
+      const content = asString(input.content);
+      if (!content) {
+        return {
+          ok: false,
+          error: "Missing social content",
+        };
+      }
+
+      const replyToTweetId = asOptionalString(input.replyToTweetId);
+      const mediaPaths = asStringArray(input.mediaPaths);
+
+      await context.log(
+        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"}`,
+      );
+
       const response = await this.xAdapter.createPost({
-        text: String(input.content ?? ""),
-        replyToTweetId: input.replyToTweetId ? String(input.replyToTweetId) : undefined,
+        text: content,
+        replyToTweetId,
         mediaPaths,
       });
+
+      const responseJson =
+        typeof response === "object" && response !== null
+          ? (response as Json)
+          : ({
+              value: String(response),
+            } as Json);
+
+      await context.log("SocialWorker X post completed");
+
       return {
         ok: true,
         output: {
           published: true,
           channel,
-          response: response as Json,
+          content,
+          replyToTweetId: replyToTweetId ?? null,
+          mediaCount: mediaPaths?.length ?? 0,
+          response: responseJson,
         },
       };
-    }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Social worker failed";
 
-    return { ok: false, error: `Unsupported social channel: ${channel}` };
+      await context.log(`SocialWorker failed: ${message}`);
+
+      return {
+        ok: false,
+        error: message,
+      };
+    }
   }
 }
