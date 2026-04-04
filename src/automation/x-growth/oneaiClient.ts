@@ -2,10 +2,17 @@ export async function runOneAIWorkflow<TInput>(payload: {
   task: string;
   input: TInput;
 }) {
-  const baseUrl =
+  let baseUrl =
     process.env.ONEAI_API_BASE_URL ??
     process.env.ONEAI_BASE_URL ??
     "https://oneai-api-production.up.railway.app";
+
+  if (
+    !baseUrl.startsWith("http://") &&
+    !baseUrl.startsWith("https://")
+  ) {
+    baseUrl = `https://${baseUrl}`;
+  }
 
   const adminKey =
     process.env.ONEAI_ADMIN_API_KEY ??
@@ -13,28 +20,30 @@ export async function runOneAIWorkflow<TInput>(payload: {
     process.env.ONEAI_API_KEY ??
     "";
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (adminKey) {
-    headers["x-api-key"] = adminKey;
-    headers["x-admin-key"] = adminKey;
+  if (!adminKey) {
+    throw new Error(
+      "Missing OneAI admin key: set ONEAI_ADMIN_API_KEY, ONEAI_ADMIN_KEY, or ONEAI_API_KEY",
+    );
   }
 
-  // 🔥 关键：改 endpoint
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": adminKey,
+    "x-admin-key": adminKey,
+  };
+
   const res = await fetch(`${baseUrl}/v1/generate`, {
     method: "POST",
     headers,
     body: JSON.stringify({
-      task: payload.task,
+      type: payload.task,
       input: payload.input,
     }),
   });
 
   const text = await res.text();
 
-  let json: any;
+  let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
@@ -44,13 +53,9 @@ export async function runOneAIWorkflow<TInput>(payload: {
   if (!res.ok) {
     throw new Error(`OneAI generate failed: ${res.status} ${text}`);
   }
-
-  // 🔥 关键：兼容不同返回结构
-  // 有些版本返回 { data: {...} }
-  // 有些直接返回 {...}
-  if (json?.data) {
-    return json.data;
-  }
-
+  console.log("[oneaiClient] requestBody=", JSON.stringify({
+  type: payload.task,
+  input: payload.input,
+}));
   return json;
 }
