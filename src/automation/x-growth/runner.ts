@@ -78,6 +78,7 @@ export class XGrowthRunner {
     });
 
     if (!executableSteps.length) {
+      console.log("[OneAI raw result]", JSON.stringify(workflowResult, null, 2));
       console.log("[x-growth] publisher task contains no executable steps");
       return;
     }
