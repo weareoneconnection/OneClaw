@@ -381,13 +381,12 @@ export class XAdapter {
 
     const url = "https://api.twitter.com/2/tweets";
     const response = await this.signedFetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      data: body,
-    });
+    method: "POST",
+    headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(body),
+  });
 
     return this.parseJsonOrThrow(response, "X create post");
   }
