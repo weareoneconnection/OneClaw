@@ -10,6 +10,7 @@ export async function runOneAIWorkflow<TInput>(payload: {
   const adminKey =
     process.env.ONEAI_ADMIN_API_KEY ??
     process.env.ONEAI_ADMIN_KEY ??
+    process.env.ONEAI_API_KEY ??
     "";
 
   const headers: Record<string, string> = {
