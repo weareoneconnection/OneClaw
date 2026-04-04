@@ -68,6 +68,10 @@ export class SocialWorker implements Worker {
         };
       }
 
+      await context.log(
+        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`,
+      );
+
       const content = asString(input.content);
       if (!content) {
         return {
@@ -162,8 +166,9 @@ export class SocialWorker implements Worker {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Social worker failed";
+
       await context.log(
-      `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`
+        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`,
       );
       await context.log(`SocialWorker failed: ${message}`);
 

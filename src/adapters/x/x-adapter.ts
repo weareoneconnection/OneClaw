@@ -264,7 +264,7 @@ export class XAdapter {
     if (!normalizedPath) {
       throw new Error("Media path is required");
     }
-
+    
     if (this.creds.dryRun) {
       return `dryrun-${path.basename(normalizedPath)}`;
     }
@@ -334,7 +334,14 @@ export class XAdapter {
       params.mediaPaths
         ?.map((item) => asTrimmed(item))
         .filter((item) => item.length > 0) ?? [];
-
+    console.log("[XAdapter] createPost", {
+    dryRun: this.isDryRun(),
+    configured: this.isConfigured(),
+    hasBearer: this.isReadConfigured(),
+    textLength: text.length,
+    hasReply: Boolean(replyToTweetId),
+    mediaCount: mediaPaths.length,
+    });
     if (this.creds.dryRun) {
       return {
         data: {
