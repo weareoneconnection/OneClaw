@@ -59,14 +59,20 @@ export class XGrowthRunner {
       task: "x_publisher",
       input: {
         message:
-          "Generate today's high-signal X publishing plan for the official OneAI account.",
+          "Operate the official OneAI X account for credible daily growth. Generate a strong high-signal post if a worthwhile growth, proof, or launch move exists. Prefer useful strategic publishing over unnecessary silence.",
         lang: "en",
         websiteUrl: process.env.ONEAI_WEBSITE_URL ?? "https://oneai.network",
         postureHint: "growth",
       },
     });
 
+    console.log(
+      "[x-growth] publisher workflowResult=",
+      JSON.stringify(workflowResult, null, 2),
+    );
+
     const task = extractOneClawTask(workflowResult);
+
     if (!task) {
       console.log("[x-growth] publisher returned no executable task");
       return;
@@ -78,7 +84,6 @@ export class XGrowthRunner {
     });
 
     if (!executableSteps.length) {
-      console.log("[OneAI raw result]", JSON.stringify(workflowResult, null, 2));
       console.log("[x-growth] publisher task contains no executable steps");
       return;
     }
@@ -162,31 +167,22 @@ export class XGrowthRunner {
       task: "x_engage",
       input: {
         message:
-          "Review these candidate tweets and reply only when strategically valuable for OneAI growth.",
+          "Review these candidate tweets and reply when the interaction creates real credibility, useful visibility, or builder-grade positioning for OneAI.",
         lang: "en",
         candidateTweets: freshCandidates,
       },
     });
 
-    let task = extractOneClawTask(workflowResult);
+    console.log(
+      "[x-growth] engage workflowResult=",
+      JSON.stringify(workflowResult, null, 2),
+    );
 
-if (!task) {
-  console.log("[x-growth] fallback: force publish");
-
-  task = {
-    taskName: "fallback_publish",
-    steps: [
-      {
-        id: "step_1",
-        action: "social.post",
-        input: {
-          content:
-            "Most people are building AI tools.\n\nWe are building AI execution.\n\nOneAI × OneClaw is just getting started.",
-        },
-      },
-    ],
-  };
-}
+    const task = extractOneClawTask(workflowResult);
+    if (!task) {
+      console.log("[x-growth] engage returned no executable task");
+      return;
+    }
 
     const allowedSteps = task.steps.filter((step) => {
       const replyToTweetId = asString(step.input.replyToTweetId);

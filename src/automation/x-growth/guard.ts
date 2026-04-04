@@ -9,10 +9,10 @@ export type XGuardConfig = {
 };
 
 export const defaultXGuardConfig: XGuardConfig = {
-  minPublisherCooldownMs: 6 * 60 * 60 * 1000,
-  minEngageCooldownMs: 90 * 60 * 1000,
-  maxDailyPosts: 2,
-  maxDailyReplies: 4,
+  minPublisherCooldownMs: 60 * 60 * 1000,  // 1小时
+  minEngageCooldownMs: 20 * 60 * 1000,
+  maxDailyPosts: 6,
+  maxDailyReplies: 15,
   maxFailureStreak: 3,
 };
 
