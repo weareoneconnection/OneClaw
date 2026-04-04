@@ -21,6 +21,16 @@ function asPositiveNumber(value: Json | undefined): number | undefined {
   return undefined;
 }
 
+function asBoundedPositiveNumber(
+  value: Json | undefined,
+  min: number,
+  max: number,
+): number | undefined {
+  const num = asPositiveNumber(value);
+  if (num === undefined) return undefined;
+  return Math.max(min, Math.min(max, num));
+}
+
 function asStringArray(value: Json | undefined): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
@@ -28,7 +38,18 @@ function asStringArray(value: Json | undefined): string[] | undefined {
     .map((item) => String(item ?? "").trim())
     .filter((item) => item.length > 0);
 
-  return items.length ? items : undefined;
+  if (!items.length) return undefined;
+
+  return Array.from(new Set(items));
+}
+
+function truncateForLog(value: string, max = 120): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}...`;
+}
+
+function isNumericId(value: string): boolean {
+  return /^[0-9]{1,19}$/.test(value);
 }
 
 function toJsonSafe<T>(value: T): Json {
@@ -44,16 +65,24 @@ export class XReaderWorker implements Worker {
     input: Record<string, Json>,
     context: ExecutionContext,
   ): Promise<WorkerExecutionResult> {
-    await context.log(`XReaderWorker executing ${context.action}`);
+    const action = asString(context.action);
+    await context.log(`XReaderWorker executing ${action || "unknown"}`);
 
     try {
-      switch (context.action) {
+      switch (action) {
         case "x.getTweet": {
           const tweetId = asString(input.tweetId);
           if (!tweetId) {
             return {
               ok: false,
               error: "x.getTweet requires input.tweetId",
+            };
+          }
+
+          if (!isNumericId(tweetId)) {
+            return {
+              ok: false,
+              error: "x.getTweet requires input.tweetId to be a numeric tweet ID",
             };
           }
 
@@ -64,7 +93,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               tweetId,
               found: Boolean(tweet),
               tweet: tweet ? toJsonSafe(tweet) : null,
@@ -81,6 +110,14 @@ export class XReaderWorker implements Worker {
             };
           }
 
+          const invalidTweetId = tweetIds.find((item) => !isNumericId(item));
+          if (invalidTweetId) {
+            return {
+              ok: false,
+              error: `x.getTweets received invalid numeric tweet ID: ${invalidTweetId}`,
+            };
+          }
+
           await context.log(
             `XReaderWorker getTweets count=${tweetIds.length}`,
           );
@@ -90,7 +127,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               requestedCount: tweetIds.length,
               returnedCount: tweets.length,
               tweets: toJsonSafe(tweets),
@@ -108,7 +145,7 @@ export class XReaderWorker implements Worker {
           }
 
           await context.log(
-            `XReaderWorker getUserByUsername username=${username}`,
+            `XReaderWorker getUserByUsername username=${truncateForLog(username, 60)}`,
           );
 
           const user = await this.xAdapter.getUserByUsername(username);
@@ -116,7 +153,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               username,
               found: Boolean(user),
               user: user ? toJsonSafe(user) : null,
@@ -133,7 +170,14 @@ export class XReaderWorker implements Worker {
             };
           }
 
-          const maxResults = asPositiveNumber(input.maxResults);
+          if (!isNumericId(userId)) {
+            return {
+              ok: false,
+              error: "x.getUserTweets requires input.userId to be a numeric user ID",
+            };
+          }
+
+          const maxResults = asBoundedPositiveNumber(input.maxResults, 5, 100);
           const paginationToken = asOptionalString(input.paginationToken);
 
           await context.log(
@@ -148,7 +192,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               userId,
               tweetsCount: result.tweets.length,
               nextToken: result.nextToken ?? null,
@@ -167,11 +211,11 @@ export class XReaderWorker implements Worker {
             };
           }
 
-          const maxResults = asPositiveNumber(input.maxResults);
+          const maxResults = asBoundedPositiveNumber(input.maxResults, 5, 100);
           const paginationToken = asOptionalString(input.paginationToken);
 
           await context.log(
-            `XReaderWorker getUserTweetsByUsername username=${username} maxResults=${maxResults ?? 10}`,
+            `XReaderWorker getUserTweetsByUsername username=${truncateForLog(username, 60)} maxResults=${maxResults ?? 10}`,
           );
 
           const result = await this.xAdapter.getUserTweetsByUsername(username, {
@@ -182,7 +226,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               username,
               tweetsCount: result.tweets.length,
               nextToken: result.nextToken ?? null,
@@ -201,11 +245,11 @@ export class XReaderWorker implements Worker {
             };
           }
 
-          const maxResults = asPositiveNumber(input.maxResults);
+          const maxResults = asBoundedPositiveNumber(input.maxResults, 10, 100);
           const paginationToken = asOptionalString(input.paginationToken);
 
           await context.log(
-            `XReaderWorker searchRecentTweets query=${query} maxResults=${maxResults ?? 10}`,
+            `XReaderWorker searchRecentTweets query=${truncateForLog(query)} maxResults=${maxResults ?? 10}`,
           );
 
           const result = await this.xAdapter.searchRecentTweets(query, {
@@ -216,7 +260,7 @@ export class XReaderWorker implements Worker {
           return {
             ok: true,
             output: {
-              action: context.action,
+              action,
               query,
               tweetsCount: result.tweets.length,
               nextToken: result.nextToken ?? null,
@@ -228,7 +272,7 @@ export class XReaderWorker implements Worker {
         default:
           return {
             ok: false,
-            error: `Unsupported X reader action: ${context.action}`,
+            error: `Unsupported X reader action: ${action}`,
           };
       }
     } catch (error) {

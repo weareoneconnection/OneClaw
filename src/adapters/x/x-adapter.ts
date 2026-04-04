@@ -77,6 +77,9 @@ function toQueryString(
 export class XAdapter {
   private readonly oauth?: OAuth;
   private readonly creds: XAdapterCreds;
+  private readonly requestTimeoutMs: number;
+  private readonly maxMediaSizeBytes: number;
+  private readonly maxPostLength: number;
 
   constructor(creds?: XAdapterCreds) {
     this.creds = {
@@ -100,6 +103,19 @@ export class XAdapter {
             "",
         ).toLowerCase() === "true",
     };
+
+    this.requestTimeoutMs = Math.max(
+      3000,
+      Number(process.env.X_REQUEST_TIMEOUT_MS ?? 20000),
+    );
+    this.maxMediaSizeBytes = Math.max(
+      1024 * 1024,
+      Number(process.env.X_MAX_MEDIA_SIZE_BYTES ?? 15 * 1024 * 1024),
+    );
+    this.maxPostLength = Math.max(
+      50,
+      Number(process.env.X_MAX_POST_LENGTH ?? 280),
+    );
 
     if (
       this.creds.appKey &&
@@ -158,7 +174,7 @@ export class XAdapter {
 
     const auth = oauth.authorize(requestData, token);
 
-    return fetch(url, {
+    return this.fetchWithTimeout(url, {
       method: init.method,
       headers: {
         ...oauth.toHeader(auth),
@@ -192,7 +208,7 @@ export class XAdapter {
   ): Promise<Response> {
     const authHeaders = this.getReadAuthHeader();
 
-    return fetch(url, {
+    return this.fetchWithTimeout(url, {
       method: init?.method ?? "GET",
       headers: {
         ...authHeaders,
@@ -201,10 +217,39 @@ export class XAdapter {
     });
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`X request timeout after ${this.requestTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async parseJsonOrThrow<T>(response: Response, label: string): Promise<T> {
+    const contentType = response.headers.get("content-type") ?? "";
+
     if (!response.ok) {
       const bodyText = await response.text();
       throw new Error(`${label} failed: ${response.status} ${bodyText}`);
+    }
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      const bodyText = await response.text();
+      throw new Error(`${label} failed: expected JSON response, got ${contentType || "unknown"} ${bodyText}`);
     }
 
     return (await response.json()) as T;
@@ -231,6 +276,16 @@ export class XAdapter {
     const stat = fs.statSync(normalizedPath);
     if (!stat.isFile()) {
       throw new Error(`Media path is not a file: ${normalizedPath}`);
+    }
+
+    if (stat.size <= 0) {
+      throw new Error(`Media file is empty: ${normalizedPath}`);
+    }
+
+    if (stat.size > this.maxMediaSizeBytes) {
+      throw new Error(
+        `Media file too large: ${normalizedPath} (${stat.size} bytes > ${this.maxMediaSizeBytes} bytes)`,
+      );
     }
 
     const buffer = fs.readFileSync(normalizedPath);
@@ -266,6 +321,12 @@ export class XAdapter {
     const text = asTrimmed(params.text);
     if (!text) {
       throw new Error("Post text is required");
+    }
+
+    if (text.length > this.maxPostLength) {
+      throw new Error(
+        `Post text too long: ${text.length} characters (max ${this.maxPostLength})`,
+      );
     }
 
     const replyToTweetId = asTrimmed(params.replyToTweetId);
@@ -318,6 +379,7 @@ export class XAdapter {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      data: body,
     });
 
     return this.parseJsonOrThrow(response, "X create post");

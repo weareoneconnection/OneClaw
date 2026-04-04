@@ -23,11 +23,18 @@ function asStringArray(value: Json | undefined): string[] | undefined {
     .map((item) => String(item ?? "").trim())
     .filter((item) => item.length > 0);
 
-  return items.length > 0 ? items : undefined;
+  if (!items.length) return undefined;
+
+  return Array.from(new Set(items));
 }
 
 function isValidTweetId(value: string): boolean {
   return /^[0-9]{1,19}$/.test(value);
+}
+
+function truncateForLog(value: string, max = 120): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}...`;
 }
 
 export class SocialWorker implements Worker {
@@ -47,6 +54,13 @@ export class SocialWorker implements Worker {
     );
 
     try {
+      if (action !== "social.post") {
+        return {
+          ok: false,
+          error: `Unsupported social action: ${action || "unknown"}`,
+        };
+      }
+
       if (channel !== "x") {
         return {
           ok: false,
@@ -62,6 +76,13 @@ export class SocialWorker implements Worker {
         };
       }
 
+      if (content.length > 280) {
+        return {
+          ok: false,
+          error: `Social content too long: ${content.length} characters (max 280)`,
+        };
+      }
+
       const replyToTweetId = asOptionalString(input.replyToTweetId);
       if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
         return {
@@ -72,6 +93,13 @@ export class SocialWorker implements Worker {
       }
 
       const mediaPaths = asStringArray(input.mediaPaths);
+
+      if (mediaPaths && mediaPaths.length > 4) {
+        return {
+          ok: false,
+          error: `Too many media files: ${mediaPaths.length} (max 4)`,
+        };
+      }
 
       if (mediaPaths?.length) {
         for (const mediaPath of mediaPaths) {
@@ -89,11 +117,18 @@ export class SocialWorker implements Worker {
               error: `Media path is not a file: ${mediaPath}`,
             };
           }
+
+          if (stat.size <= 0) {
+            return {
+              ok: false,
+              error: `Media file is empty: ${mediaPath}`,
+            };
+          }
         }
       }
 
       await context.log(
-        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"}`,
+        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(content, 80)}`,
       );
 
       const response = await this.xAdapter.createPost({
@@ -115,8 +150,10 @@ export class SocialWorker implements Worker {
         ok: true,
         output: {
           published: true,
+          action,
           channel,
           content,
+          contentLength: content.length,
           replyToTweetId: replyToTweetId ?? null,
           mediaCount: mediaPaths?.length ?? 0,
           response: responseJson,

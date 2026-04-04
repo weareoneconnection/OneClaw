@@ -19,6 +19,7 @@ import { FileWorker } from "./workers/files/file-worker.js";
 import { MessagingWorker } from "./workers/messaging/messaging-worker.js";
 import { SocialWorker } from "./workers/social/social-worker.js";
 import { Web3Worker } from "./workers/web3/web3-worker.js";
+import { XReaderWorker } from "./workers/social/x-reader-worker.js";
 import { SessionManager } from "./state/session-manager.js";
 import { createTaskQueue } from "./queue/index.js";
 import type { NormalizedTaskDefinition } from "./types/task.js";
@@ -26,7 +27,8 @@ import type { NormalizedTaskDefinition } from "./types/task.js";
 export async function bootstrap(options?: { workerOnly?: boolean }) {
   const config = loadConfig();
 
-  fs.mkdirSync(path.resolve(config.artifactsDir), { recursive: true });
+  const artifactsDir = path.resolve(config.artifactsDir || "./artifacts");
+  fs.mkdirSync(artifactsDir, { recursive: true });
 
   const planner = new TaskPlanner();
   const policy = new PolicyEngine();
@@ -35,13 +37,15 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   const sessionManager = new SessionManager();
   const normalizedTaskStore = new Map<string, NormalizedTaskDefinition>();
 
-  const pool =
-    config.taskStoreMode === "postgres"
-      ? new Pool({ connectionString: config.postgresUrl })
-      : undefined;
+  const shouldUsePostgres =
+    config.taskStoreMode === "postgres" && Boolean(config.postgresUrl);
+
+  const pool = shouldUsePostgres
+    ? new Pool({ connectionString: config.postgresUrl })
+    : undefined;
 
   const taskStore =
-    config.taskStoreMode === "postgres" && pool
+    shouldUsePostgres && pool
       ? new PostgresTaskStore(pool)
       : new InMemoryTaskStore();
 
@@ -53,7 +57,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   const browserAdapter = new PlaywrightBrowserAdapter({
     headless: config.playwrightHeadless,
     timeoutMs: config.playwrightTimeoutMs,
-    artifactsDir: config.artifactsDir,
+    artifactsDir: artifactsDir,
   });
 
   const telegramAdapter = new TelegramAdapter(config.telegramBotToken);
@@ -63,6 +67,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
     appSecret: config.xAppSecret,
     accessToken: config.xAccessToken,
     accessSecret: config.xAccessSecret,
+    bearerToken: process.env.X_BEARER_TOKEN,
     dryRun: config.xDryRun,
   });
 
@@ -72,6 +77,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new FileWorker());
   workers.register(new SocialWorker(xAdapter));
   workers.register(new Web3Worker());
+  workers.register(new XReaderWorker(xAdapter));
 
   const regs = [
     // Browser
@@ -166,6 +172,44 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "social_worker",
       risk: "high",
       description: "Publish social content",
+    },
+
+    // X reader
+    {
+      action: "x.getTweet",
+      workerName: "x_reader_worker",
+      risk: "low",
+      description: "Read a single X tweet",
+    },
+    {
+      action: "x.getTweets",
+      workerName: "x_reader_worker",
+      risk: "low",
+      description: "Read multiple X tweets",
+    },
+    {
+      action: "x.getUserByUsername",
+      workerName: "x_reader_worker",
+      risk: "low",
+      description: "Resolve X user by username",
+    },
+    {
+      action: "x.getUserTweets",
+      workerName: "x_reader_worker",
+      risk: "low",
+      description: "Read recent tweets for an X user ID",
+    },
+    {
+      action: "x.getUserTweetsByUsername",
+      workerName: "x_reader_worker",
+      risk: "low",
+      description: "Read recent tweets for an X username",
+    },
+    {
+      action: "x.searchRecentTweets",
+      workerName: "x_reader_worker",
+      risk: "medium",
+      description: "Search recent tweets on X",
     },
 
     // Web3 (new)

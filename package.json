@@ -11,7 +11,9 @@
     "start:worker": "node dist/worker.js",
     "check": "tsc --noEmit -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
+    "growth:x": "tsx src/automation/x-growth/index.ts",
     "dev:all": "npm run migrate && npm run dev"
+    
   },
   "dependencies": {
     "bullmq": "^5.8.0",
