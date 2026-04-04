@@ -25,6 +25,7 @@ import type { NormalizedTaskDefinition } from "./types/task.js";
 
 export async function bootstrap(options?: { workerOnly?: boolean }) {
   const config = loadConfig();
+
   fs.mkdirSync(path.resolve(config.artifactsDir), { recursive: true });
 
   const planner = new TaskPlanner();
@@ -73,6 +74,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new Web3Worker());
 
   const regs = [
+    // Browser
     {
       action: "browser.open",
       workerName: "browser_worker",
@@ -110,6 +112,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Extract rendered page content",
     },
 
+    // Messaging (TG)
     {
       action: "message.send",
       workerName: "messaging_worker",
@@ -117,6 +120,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Send a message",
     },
 
+    // API
     {
       action: "api.request",
       workerName: "api_worker",
@@ -124,6 +128,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Perform an HTTP request",
     },
 
+    // File
     {
       action: "file.read",
       workerName: "file_worker",
@@ -155,6 +160,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Delete a file or directory",
     },
 
+    // Social (X)
     {
       action: "social.post",
       workerName: "social_worker",
@@ -162,6 +168,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Publish social content",
     },
 
+    // Web3 (new)
     {
       action: "web3.ping",
       workerName: "web3_worker",
@@ -197,6 +204,20 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "web3_worker",
       risk: "high",
       description: "Transfer native token or asset",
+    },
+
+    // Web3 legacy aliases (for old flows compatibility)
+    {
+      action: "chain.query",
+      workerName: "web3_worker",
+      risk: "low",
+      description: "Legacy alias: query chain state",
+    },
+    {
+      action: "wallet.read",
+      workerName: "web3_worker",
+      risk: "medium",
+      description: "Legacy alias: read wallet data",
     },
   ] as const;
 

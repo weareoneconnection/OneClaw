@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type {
   ExecutionContext,
   Worker,
@@ -22,7 +23,11 @@ function asStringArray(value: Json | undefined): string[] | undefined {
     .map((item) => String(item ?? "").trim())
     .filter((item) => item.length > 0);
 
-  return items.length ? items : undefined;
+  return items.length > 0 ? items : undefined;
+}
+
+function isValidTweetId(value: string): boolean {
+  return /^[0-9]{1,19}$/.test(value);
 }
 
 export class SocialWorker implements Worker {
@@ -58,7 +63,34 @@ export class SocialWorker implements Worker {
       }
 
       const replyToTweetId = asOptionalString(input.replyToTweetId);
+      if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
+        return {
+          ok: false,
+          error:
+            "Invalid replyToTweetId: must be a numeric tweet ID (1-19 digits)",
+        };
+      }
+
       const mediaPaths = asStringArray(input.mediaPaths);
+
+      if (mediaPaths?.length) {
+        for (const mediaPath of mediaPaths) {
+          if (!fs.existsSync(mediaPath)) {
+            return {
+              ok: false,
+              error: `Media file not found: ${mediaPath}`,
+            };
+          }
+
+          const stat = fs.statSync(mediaPath);
+          if (!stat.isFile()) {
+            return {
+              ok: false,
+              error: `Media path is not a file: ${mediaPath}`,
+            };
+          }
+        }
+      }
 
       await context.log(
         `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"}`,
