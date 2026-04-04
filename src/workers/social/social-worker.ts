@@ -37,6 +37,14 @@ function truncateForLog(value: string, max = 120): string {
   return `${value.slice(0, max)}...`;
 }
 
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export class SocialWorker implements Worker {
   readonly name = "social_worker";
 
@@ -69,8 +77,16 @@ export class SocialWorker implements Worker {
       }
 
       await context.log(
-        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`,
+        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()} xReadConfigured=${this.xAdapter.isReadConfigured()}`,
       );
+
+      console.log("[SocialWorker] state", {
+        action,
+        channel,
+        xConfigured: this.xAdapter.isConfigured(),
+        xDryRun: this.xAdapter.isDryRun(),
+        xReadConfigured: this.xAdapter.isReadConfigured(),
+      });
 
       const content = asString(input.content);
       if (!content) {
@@ -135,6 +151,13 @@ export class SocialWorker implements Worker {
         `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(content, 80)}`,
       );
 
+      console.log("[SocialWorker] preparing X post", {
+        textLength: content.length,
+        hasReply: Boolean(replyToTweetId),
+        mediaCount: mediaPaths?.length ?? 0,
+        preview: truncateForLog(content, 80),
+      });
+
       const response = await this.xAdapter.createPost({
         text: content,
         replyToTweetId,
@@ -148,7 +171,14 @@ export class SocialWorker implements Worker {
               value: String(response),
             } as Json);
 
+      await context.log(
+        `SocialWorker X response=${safeJsonStringify(responseJson)}`,
+      );
+
+      console.log("[SocialWorker] X response", response);
+
       await context.log("SocialWorker X post completed");
+      console.log("[SocialWorker] X post completed");
 
       return {
         ok: true,
@@ -168,9 +198,16 @@ export class SocialWorker implements Worker {
         error instanceof Error ? error.message : "Social worker failed";
 
       await context.log(
-        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`,
+        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()} xReadConfigured=${this.xAdapter.isReadConfigured()}`,
       );
       await context.log(`SocialWorker failed: ${message}`);
+
+      console.error("[SocialWorker] failed", {
+        xConfigured: this.xAdapter.isConfigured(),
+        xDryRun: this.xAdapter.isDryRun(),
+        xReadConfigured: this.xAdapter.isReadConfigured(),
+        error: message,
+      });
 
       return {
         ok: false,
