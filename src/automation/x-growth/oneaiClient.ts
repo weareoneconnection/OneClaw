@@ -5,7 +5,7 @@ export async function runOneAIWorkflow<TInput>(payload: {
   const baseUrl =
     process.env.ONEAI_API_BASE_URL ??
     process.env.ONEAI_BASE_URL ??
-    "http://localhost:3000";
+    "https://oneai-production.up.railway.app";
 
   const adminKey =
     process.env.ONEAI_ADMIN_API_KEY ??
@@ -21,15 +21,19 @@ export async function runOneAIWorkflow<TInput>(payload: {
     headers["x-admin-key"] = adminKey;
   }
 
-  const res = await fetch(`${baseUrl}/v1/workflows/run`, {
+  // 🔥 关键：改 endpoint
+  const res = await fetch(`${baseUrl}/v1/generate`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      task: payload.task,
+      input: payload.input,
+    }),
   });
 
   const text = await res.text();
 
-  let json: unknown;
+  let json: any;
   try {
     json = JSON.parse(text);
   } catch {
@@ -37,7 +41,14 @@ export async function runOneAIWorkflow<TInput>(payload: {
   }
 
   if (!res.ok) {
-    throw new Error(`OneAI workflow failed: ${res.status} ${text}`);
+    throw new Error(`OneAI generate failed: ${res.status} ${text}`);
+  }
+
+  // 🔥 关键：兼容不同返回结构
+  // 有些版本返回 { data: {...} }
+  // 有些直接返回 {...}
+  if (json?.data) {
+    return json.data;
   }
 
   return json;

@@ -22,7 +22,7 @@ function getBaseUrl(): string {
   return (
     process.env.ONECLAW_API_BASE_URL ??
     process.env.ONECLAW_BASE_URL ??
-    "http://localhost:4100"
+    "https://oneclaw-production.up.railway.app"
   );
 }
 
