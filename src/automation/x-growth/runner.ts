@@ -59,7 +59,7 @@ export class XGrowthRunner {
       task: "x_publisher",
       input: {
         message:
-          "Operate the official OneAI X account for credible daily growth. Generate a strong high-signal post if a worthwhile growth, proof, or launch move exists. Prefer useful strategic publishing over unnecessary silence.",
+        "Publish a real high-signal post for the official OneAI account now. Prefer shouldExecute=true for growth, proof, or launch if a credible post can be produced. Do not choose quiet unless the input is unusable.",
         lang: "en",
         websiteUrl: process.env.ONEAI_WEBSITE_URL ?? "https://oneai.network",
         postureHint: "growth",
