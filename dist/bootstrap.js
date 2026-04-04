@@ -19,21 +19,24 @@ import { FileWorker } from "./workers/files/file-worker.js";
 import { MessagingWorker } from "./workers/messaging/messaging-worker.js";
 import { SocialWorker } from "./workers/social/social-worker.js";
 import { Web3Worker } from "./workers/web3/web3-worker.js";
+import { XReaderWorker } from "./workers/social/x-reader-worker.js";
 import { SessionManager } from "./state/session-manager.js";
 import { createTaskQueue } from "./queue/index.js";
 export async function bootstrap(options) {
     const config = loadConfig();
-    fs.mkdirSync(path.resolve(config.artifactsDir), { recursive: true });
+    const artifactsDir = path.resolve(config.artifactsDir || "./artifacts");
+    fs.mkdirSync(artifactsDir, { recursive: true });
     const planner = new TaskPlanner();
     const policy = new PolicyEngine();
     const capabilities = new CapabilityRegistry();
     const workers = new WorkerRegistry();
     const sessionManager = new SessionManager();
     const normalizedTaskStore = new Map();
-    const pool = config.taskStoreMode === "postgres"
+    const shouldUsePostgres = config.taskStoreMode === "postgres" && Boolean(config.postgresUrl);
+    const pool = shouldUsePostgres
         ? new Pool({ connectionString: config.postgresUrl })
         : undefined;
-    const taskStore = config.taskStoreMode === "postgres" && pool
+    const taskStore = shouldUsePostgres && pool
         ? new PostgresTaskStore(pool)
         : new InMemoryTaskStore();
     const httpAdapter = new HttpAdapter({
@@ -43,7 +46,7 @@ export async function bootstrap(options) {
     const browserAdapter = new PlaywrightBrowserAdapter({
         headless: config.playwrightHeadless,
         timeoutMs: config.playwrightTimeoutMs,
-        artifactsDir: config.artifactsDir,
+        artifactsDir: artifactsDir,
     });
     const telegramAdapter = new TelegramAdapter(config.telegramBotToken);
     const xAdapter = new XAdapter({
@@ -51,6 +54,7 @@ export async function bootstrap(options) {
         appSecret: config.xAppSecret,
         accessToken: config.xAccessToken,
         accessSecret: config.xAccessSecret,
+        bearerToken: process.env.X_BEARER_TOKEN,
         dryRun: config.xDryRun,
     });
     workers.register(new BrowserWorker(browserAdapter, sessionManager));
@@ -59,7 +63,9 @@ export async function bootstrap(options) {
     workers.register(new FileWorker());
     workers.register(new SocialWorker(xAdapter));
     workers.register(new Web3Worker());
+    workers.register(new XReaderWorker(xAdapter));
     const regs = [
+        // Browser
         {
             action: "browser.open",
             workerName: "browser_worker",
@@ -96,18 +102,21 @@ export async function bootstrap(options) {
             risk: "low",
             description: "Extract rendered page content",
         },
+        // Messaging (TG)
         {
             action: "message.send",
             workerName: "messaging_worker",
             risk: "medium",
             description: "Send a message",
         },
+        // API
         {
             action: "api.request",
             workerName: "api_worker",
             risk: "medium",
             description: "Perform an HTTP request",
         },
+        // File
         {
             action: "file.read",
             workerName: "file_worker",
@@ -138,12 +147,51 @@ export async function bootstrap(options) {
             risk: "high",
             description: "Delete a file or directory",
         },
+        // Social (X)
         {
             action: "social.post",
             workerName: "social_worker",
             risk: "high",
             description: "Publish social content",
         },
+        // X reader
+        {
+            action: "x.getTweet",
+            workerName: "x_reader_worker",
+            risk: "low",
+            description: "Read a single X tweet",
+        },
+        {
+            action: "x.getTweets",
+            workerName: "x_reader_worker",
+            risk: "low",
+            description: "Read multiple X tweets",
+        },
+        {
+            action: "x.getUserByUsername",
+            workerName: "x_reader_worker",
+            risk: "low",
+            description: "Resolve X user by username",
+        },
+        {
+            action: "x.getUserTweets",
+            workerName: "x_reader_worker",
+            risk: "low",
+            description: "Read recent tweets for an X user ID",
+        },
+        {
+            action: "x.getUserTweetsByUsername",
+            workerName: "x_reader_worker",
+            risk: "low",
+            description: "Read recent tweets for an X username",
+        },
+        {
+            action: "x.searchRecentTweets",
+            workerName: "x_reader_worker",
+            risk: "medium",
+            description: "Search recent tweets on X",
+        },
+        // Web3 (new)
         {
             action: "web3.ping",
             workerName: "web3_worker",
@@ -179,6 +227,19 @@ export async function bootstrap(options) {
             workerName: "web3_worker",
             risk: "high",
             description: "Transfer native token or asset",
+        },
+        // Web3 legacy aliases (for old flows compatibility)
+        {
+            action: "chain.query",
+            workerName: "web3_worker",
+            risk: "low",
+            description: "Legacy alias: query chain state",
+        },
+        {
+            action: "wallet.read",
+            workerName: "web3_worker",
+            risk: "medium",
+            description: "Legacy alias: read wallet data",
         },
     ];
     for (const registration of regs) {

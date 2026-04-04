@@ -1,3 +1,4 @@
+import fs from "node:fs";
 function asString(value) {
     return String(value ?? "").trim();
 }
@@ -11,7 +12,17 @@ function asStringArray(value) {
     const items = value
         .map((item) => String(item ?? "").trim())
         .filter((item) => item.length > 0);
-    return items.length ? items : undefined;
+    if (!items.length)
+        return undefined;
+    return Array.from(new Set(items));
+}
+function isValidTweetId(value) {
+    return /^[0-9]{1,19}$/.test(value);
+}
+function truncateForLog(value, max = 120) {
+    if (value.length <= max)
+        return value;
+    return `${value.slice(0, max)}...`;
 }
 export class SocialWorker {
     xAdapter;
@@ -24,12 +35,19 @@ export class SocialWorker {
         const channel = asString(input.channel || "x").toLowerCase();
         await context.log(`SocialWorker executing action=${action || "unknown"} channel=${channel}`);
         try {
+            if (action !== "social.post") {
+                return {
+                    ok: false,
+                    error: `Unsupported social action: ${action || "unknown"}`,
+                };
+            }
             if (channel !== "x") {
                 return {
                     ok: false,
                     error: `Unsupported social channel: ${channel}`,
                 };
             }
+            await context.log(`SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`);
             const content = asString(input.content);
             if (!content) {
                 return {
@@ -37,9 +55,50 @@ export class SocialWorker {
                     error: "Missing social content",
                 };
             }
+            if (content.length > 280) {
+                return {
+                    ok: false,
+                    error: `Social content too long: ${content.length} characters (max 280)`,
+                };
+            }
             const replyToTweetId = asOptionalString(input.replyToTweetId);
+            if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
+                return {
+                    ok: false,
+                    error: "Invalid replyToTweetId: must be a numeric tweet ID (1-19 digits)",
+                };
+            }
             const mediaPaths = asStringArray(input.mediaPaths);
-            await context.log(`SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"}`);
+            if (mediaPaths && mediaPaths.length > 4) {
+                return {
+                    ok: false,
+                    error: `Too many media files: ${mediaPaths.length} (max 4)`,
+                };
+            }
+            if (mediaPaths?.length) {
+                for (const mediaPath of mediaPaths) {
+                    if (!fs.existsSync(mediaPath)) {
+                        return {
+                            ok: false,
+                            error: `Media file not found: ${mediaPath}`,
+                        };
+                    }
+                    const stat = fs.statSync(mediaPath);
+                    if (!stat.isFile()) {
+                        return {
+                            ok: false,
+                            error: `Media path is not a file: ${mediaPath}`,
+                        };
+                    }
+                    if (stat.size <= 0) {
+                        return {
+                            ok: false,
+                            error: `Media file is empty: ${mediaPath}`,
+                        };
+                    }
+                }
+            }
+            await context.log(`SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(content, 80)}`);
             const response = await this.xAdapter.createPost({
                 text: content,
                 replyToTweetId,
@@ -55,8 +114,10 @@ export class SocialWorker {
                 ok: true,
                 output: {
                     published: true,
+                    action,
                     channel,
                     content,
+                    contentLength: content.length,
                     replyToTweetId: replyToTweetId ?? null,
                     mediaCount: mediaPaths?.length ?? 0,
                     response: responseJson,
@@ -65,6 +126,7 @@ export class SocialWorker {
         }
         catch (error) {
             const message = error instanceof Error ? error.message : "Social worker failed";
+            await context.log(`SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()}`);
             await context.log(`SocialWorker failed: ${message}`);
             return {
                 ok: false,

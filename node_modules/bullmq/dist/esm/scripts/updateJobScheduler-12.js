@@ -41,6 +41,13 @@ local jobOpts = cmsgpack.unpack(ARGV[4])
 ]]
 -- Includes
 --[[
+  Shared helper to store a job and enqueue it into the appropriate list/set.
+  Handles delayed, prioritized, and standard (LIFO/FIFO) jobs.
+  Emits the appropriate event after enqueuing ("delayed" or "waiting").
+  Returns delay, priority from storeJob.
+]]
+-- Includes
+--[[
   Adds a delayed job to the queue by doing the following:
     - Creates a new job key with the job data.
     - adds to delayed zset.
@@ -105,7 +112,7 @@ local function addDelayedJob(jobId, delayedKey, eventsKey, timestamp,
   addDelayMarkerIfNeeded(markerKey, delayedKey)
 end
 --[[
-  Function to add job considering priority.
+  Function to add job in target list and add marker if needed.
 ]]
 -- Includes
 --[[
@@ -116,6 +123,14 @@ local function addBaseMarkerIfNeeded(markerKey, isPausedOrMaxed)
     rcall("ZADD", markerKey, 0, "0")
   end  
 end
+local function addJobInTargetList(targetKey, markerKey, pushCmd, isPausedOrMaxed, jobId)
+  rcall(pushCmd, targetKey, jobId)
+  addBaseMarkerIfNeeded(markerKey, isPausedOrMaxed)
+end
+--[[
+  Function to add job considering priority.
+]]
+-- Includes
 --[[
   Function to get priority score.
 ]]
@@ -133,8 +148,21 @@ end
   Function to check for the meta.paused key to decide if we are paused or not
   (since an empty list and !EXISTS are not really the same).
 ]]
-local function isQueuePaused(queueMetaKey)
-  return rcall("HEXISTS", queueMetaKey, "paused") == 1
+local function getTargetQueueList(queueMetaKey, activeKey, waitKey, pausedKey)
+  local queueAttributes = rcall("HMGET", queueMetaKey, "paused", "concurrency", "max", "duration")
+  if queueAttributes[1] then
+    return pausedKey, true, queueAttributes[3], queueAttributes[4]
+  else
+    if queueAttributes[2] then
+      local activeCount = rcall("LLEN", activeKey)
+      if activeCount >= tonumber(queueAttributes[2]) then
+        return waitKey, true, queueAttributes[3], queueAttributes[4]
+      else
+        return waitKey, false, queueAttributes[3], queueAttributes[4]
+      end
+    end
+  end
+  return waitKey, false, queueAttributes[3], queueAttributes[4]
 end
 --[[
   Function to store a job
@@ -166,56 +194,37 @@ local function storeJob(eventsKey, jobIdKey, jobId, name, data, opts, timestamp,
     rcall("XADD", eventsKey, "*", "event", "added", "jobId", jobId, "name", name)
     return delay, priority
 end
---[[
-  Function to check for the meta.paused key to decide if we are paused or not
-  (since an empty list and !EXISTS are not really the same).
-]]
-local function getTargetQueueList(queueMetaKey, activeKey, waitKey, pausedKey)
-  local queueAttributes = rcall("HMGET", queueMetaKey, "paused", "concurrency", "max", "duration")
-  if queueAttributes[1] then
-    return pausedKey, true, queueAttributes[3], queueAttributes[4]
+local function storeAndEnqueueJob(eventsKey, jobIdKey, jobId, name, data, opts,
+    timestamp, parentKey, parentData, repeatJobKey, maxEvents,
+    waitKey, pausedKey, activeKey, metaKey, prioritizedKey,
+    priorityCounterKey, delayedKey, markerKey)
+  local delay, priority = storeJob(eventsKey, jobIdKey, jobId, name, data,
+      opts, timestamp, parentKey, parentData, repeatJobKey)
+  if delay ~= 0 and delayedKey then
+    addDelayedJob(jobId, delayedKey, eventsKey, timestamp, maxEvents, markerKey, delay)
   else
-    if queueAttributes[2] then
-      local activeCount = rcall("LLEN", activeKey)
-      if activeCount >= tonumber(queueAttributes[2]) then
-        return waitKey, true, queueAttributes[3], queueAttributes[4]
-      else
-        return waitKey, false, queueAttributes[3], queueAttributes[4]
-      end
+    local target, isPausedOrMaxed = getTargetQueueList(metaKey, activeKey, waitKey, pausedKey)
+    if priority > 0 then
+      addJobWithPriority(markerKey, prioritizedKey, priority, jobId,
+          priorityCounterKey, isPausedOrMaxed)
+    else
+      local pushCmd = opts['lifo'] and 'RPUSH' or 'LPUSH'
+      addJobInTargetList(target, markerKey, pushCmd, isPausedOrMaxed, jobId)
     end
+    rcall("XADD", eventsKey, "MAXLEN", "~", maxEvents, "*", "event", "waiting",
+        "jobId", jobId)
   end
-  return waitKey, false, queueAttributes[3], queueAttributes[4]
-end
---[[
-  Function to add job in target list and add marker if needed.
-]]
--- Includes
-local function addJobInTargetList(targetKey, markerKey, pushCmd, isPausedOrMaxed, jobId)
-  rcall(pushCmd, targetKey, jobId)
-  addBaseMarkerIfNeeded(markerKey, isPausedOrMaxed)
+  return delay, priority
 end
 local function addJobFromScheduler(jobKey, jobId, opts, waitKey, pausedKey, activeKey, metaKey, 
   prioritizedKey, priorityCounter, delayedKey, markerKey, eventsKey, name, maxEvents, timestamp,
   data, jobSchedulerId, repeatDelay)
   opts['delay'] = repeatDelay
   opts['jobId'] = jobId
-  local delay, priority = storeJob(eventsKey, jobKey, jobId, name, data,
-    opts, timestamp, nil, nil, jobSchedulerId)
-  if delay ~= 0 then
-    addDelayedJob(jobId, delayedKey, eventsKey, timestamp, maxEvents, markerKey, delay)
-  else
-    local target, isPausedOrMaxed = getTargetQueueList(metaKey, activeKey, waitKey, pausedKey)
-    -- Standard or priority add
-    if priority == 0 then
-      local pushCmd = opts['lifo'] and 'RPUSH' or 'LPUSH'
-      addJobInTargetList(target, markerKey, pushCmd, isPausedOrMaxed, jobId)
-    else
-      -- Priority add
-      addJobWithPriority(markerKey, prioritizedKey, priority, jobId, priorityCounter, isPausedOrMaxed)
-    end
-    -- Emit waiting event
-    rcall("XADD", eventsKey, "MAXLEN", "~", maxEvents,  "*", "event", "waiting", "jobId", jobId)
-  end
+  storeAndEnqueueJob(eventsKey, jobKey, jobId, name, data, opts,
+      timestamp, nil, nil, jobSchedulerId, maxEvents,
+      waitKey, pausedKey, activeKey, metaKey, prioritizedKey,
+      priorityCounter, delayedKey, markerKey)
 end
 --[[
   Function to get max events value or set by default 10000.
