@@ -50,6 +50,8 @@ export type XUserTweetsResponse = {
   nextToken?: string;
 };
 
+type JsonRecord = Record<string, unknown>;
+
 function asTrimmed(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -83,18 +85,34 @@ export class XAdapter {
 
   constructor(creds?: XAdapterCreds) {
     this.creds = {
-      appKey: creds?.appKey ?? process.env.X_API_KEY ?? process.env.X_APP_KEY,
+      appKey:
+        creds?.appKey ??
+        process.env.X_API_KEY ??
+        process.env.X_APP_KEY ??
+        process.env.X_CONSUMER_KEY,
+
       appSecret:
-        creds?.appSecret ?? process.env.X_API_SECRET ?? process.env.X_APP_SECRET,
+        creds?.appSecret ??
+        process.env.X_API_SECRET ??
+        process.env.X_APP_SECRET ??
+        process.env.X_CONSUMER_SECRET,
+
       accessToken:
         creds?.accessToken ??
-        process.env.X_ACCESS_TOKEN,
+        process.env.X_ACCESS_TOKEN ??
+        process.env.X_USER_ACCESS_TOKEN,
+
       accessSecret:
         creds?.accessSecret ??
-        process.env.X_ACCESS_SECRET,
+        process.env.X_ACCESS_TOKEN_SECRET ??
+        process.env.X_ACCESS_SECRET ??
+        process.env.X_USER_ACCESS_SECRET,
+
       bearerToken:
         creds?.bearerToken ??
-        process.env.X_BEARER_TOKEN,
+        process.env.X_BEARER_TOKEN ??
+        process.env.X_APP_BEARER_TOKEN,
+
       dryRun:
         creds?.dryRun ??
         String(
@@ -108,10 +126,12 @@ export class XAdapter {
       3000,
       Number(process.env.X_REQUEST_TIMEOUT_MS ?? 20000),
     );
+
     this.maxMediaSizeBytes = Math.max(
       1024 * 1024,
       Number(process.env.X_MAX_MEDIA_SIZE_BYTES ?? 15 * 1024 * 1024),
     );
+
     this.maxPostLength = Math.max(
       50,
       Number(process.env.X_MAX_POST_LENGTH ?? 280),
@@ -140,12 +160,41 @@ export class XAdapter {
   }
 
   // =========================================================
+  // Debug helpers
+  // =========================================================
+
+  private mask(value?: string): string {
+    const v = asTrimmed(value);
+    if (!v) return "(empty)";
+    if (v.length <= 8) return "********";
+    return `${v.slice(0, 4)}...${v.slice(-4)}`;
+  }
+
+  getConfigSummary() {
+    return {
+      appKey: this.mask(this.creds.appKey),
+      appSecret: this.mask(this.creds.appSecret),
+      accessToken: this.mask(this.creds.accessToken),
+      accessSecret: this.mask(this.creds.accessSecret),
+      bearerToken: this.mask(this.creds.bearerToken),
+      dryRun: this.isDryRun(),
+      writeConfigured: this.isConfigured(),
+      readConfigured: this.isReadConfigured(),
+      requestTimeoutMs: this.requestTimeoutMs,
+      maxMediaSizeBytes: this.maxMediaSizeBytes,
+      maxPostLength: this.maxPostLength,
+    };
+  }
+
+  // =========================================================
   // Write auth (OAuth 1.0a)
   // =========================================================
 
   private getWriteAuth() {
     if (!this.oauth || !this.creds.accessToken || !this.creds.accessSecret) {
-      throw new Error("X write credentials are not fully configured");
+      throw new Error(
+        "X write credentials are not fully configured. Required: appKey, appSecret, accessToken, accessSecret",
+      );
     }
 
     return {
@@ -173,11 +222,12 @@ export class XAdapter {
       : { url, method: init.method };
 
     const auth = oauth.authorize(requestData, token);
+    const authHeader = oauth.toHeader(auth);
 
     return this.fetchWithTimeout(url, {
       method: init.method,
       headers: {
-        ...oauth.toHeader(auth),
+        ...authHeader,
         ...(init.headers ?? {}),
       },
       body: init.body ?? null,
@@ -217,6 +267,10 @@ export class XAdapter {
     });
   }
 
+  // =========================================================
+  // Core fetch helpers
+  // =========================================================
+
   private async fetchWithTimeout(
     url: string,
     init: RequestInit,
@@ -239,20 +293,76 @@ export class XAdapter {
     }
   }
 
-  private async parseJsonOrThrow<T>(response: Response, label: string): Promise<T> {
+  private async parseJsonOrThrow<T>(
+    response: Response,
+    label: string,
+  ): Promise<T> {
     const contentType = response.headers.get("content-type") ?? "";
+    const rawText = await response.text();
 
     if (!response.ok) {
-      const bodyText = await response.text();
-      throw new Error(`${label} failed: ${response.status} ${bodyText}`);
+      throw new Error(`${label} failed: ${response.status} ${rawText}`);
     }
 
     if (!contentType.toLowerCase().includes("application/json")) {
-      const bodyText = await response.text();
-      throw new Error(`${label} failed: expected JSON response, got ${contentType || "unknown"} ${bodyText}`);
+      throw new Error(
+        `${label} failed: expected JSON response, got ${
+          contentType || "unknown"
+        } ${rawText}`,
+      );
     }
 
-    return (await response.json()) as T;
+    try {
+      return JSON.parse(rawText) as T;
+    } catch (error) {
+      throw new Error(
+        `${label} failed: invalid JSON response ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  // =========================================================
+  // Write auth verification
+  // =========================================================
+
+  async verifyWriteAccess(): Promise<{
+    ok: boolean;
+    status?: number;
+    detail?: string;
+    data?: unknown;
+  }> {
+    try {
+      const response = await this.signedFetch(
+        "https://api.twitter.com/1.1/account/verify_credentials.json",
+        {
+          method: "GET",
+        },
+      );
+
+      const contentType = response.headers.get("content-type") ?? "";
+      const raw = await response.text();
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          status: response.status,
+          detail: raw,
+        };
+      }
+
+      return {
+        ok: true,
+        status: response.status,
+        data: contentType.includes("application/json") ? JSON.parse(raw) : raw,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   // =========================================================
@@ -264,7 +374,7 @@ export class XAdapter {
     if (!normalizedPath) {
       throw new Error("Media path is required");
     }
-    
+
     if (this.creds.dryRun) {
       return `dryrun-${path.basename(normalizedPath)}`;
     }
@@ -334,14 +444,14 @@ export class XAdapter {
       params.mediaPaths
         ?.map((item) => asTrimmed(item))
         .filter((item) => item.length > 0) ?? [];
+
     console.log("[XAdapter] createPost", {
-    dryRun: this.isDryRun(),
-    configured: this.isConfigured(),
-    hasBearer: this.isReadConfigured(),
-    textLength: text.length,
-    hasReply: Boolean(replyToTweetId),
-    mediaCount: mediaPaths.length,
+      ...this.getConfigSummary(),
+      textLength: text.length,
+      hasReply: Boolean(replyToTweetId),
+      mediaCount: mediaPaths.length,
     });
+
     if (this.creds.dryRun) {
       return {
         data: {
@@ -353,9 +463,26 @@ export class XAdapter {
       };
     }
 
+    if (!this.isConfigured()) {
+      throw new Error(
+        "X write credentials are not fully configured. Required: appKey, appSecret, accessToken, accessSecret",
+      );
+    }
+
     if (replyToTweetId && !isNumericId(replyToTweetId)) {
       throw new Error(
         "Invalid replyToTweetId: must be a numeric tweet ID (1-19 digits)",
+      );
+    }
+
+    const verify = await this.verifyWriteAccess();
+    if (!verify.ok) {
+      throw new Error(
+        `X write auth verification failed before posting. ` +
+          `This usually means your OAuth 1.0a user token/secret is wrong, ` +
+          `or the app does not have Read and Write permission, ` +
+          `or you changed app permission but did not regenerate Access Token/Secret. ` +
+          `status=${verify.status ?? "unknown"} detail=${verify.detail ?? "unknown"}`
       );
     }
 
@@ -363,7 +490,7 @@ export class XAdapter {
       ? await Promise.all(mediaPaths.map((item) => this.uploadMedia(item)))
       : [];
 
-    const body: Record<string, unknown> = {
+    const body: JsonRecord = {
       text,
     };
 
@@ -381,12 +508,13 @@ export class XAdapter {
 
     const url = "https://api.twitter.com/2/tweets";
     const response = await this.signedFetch(url, {
-    method: "POST",
-    headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(body),
-  });
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      data: body,
+    });
 
     return this.parseJsonOrThrow(response, "X create post");
   }

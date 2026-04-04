@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type {
   ExecutionContext,
   Worker,
@@ -14,6 +15,15 @@ function asString(value: Json | undefined): string {
 function asOptionalString(value: Json | undefined): string | undefined {
   const text = String(value ?? "").trim();
   return text ? text : undefined;
+}
+
+function asBoolean(value: Json | undefined, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  return fallback;
 }
 
 function asStringArray(value: Json | undefined): string[] | undefined {
@@ -45,19 +55,179 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
+function normalizeChannel(value: Json | undefined): string {
+  const text = asString(value || "x").toLowerCase();
+  if (text === "twitter") return "x";
+  return text;
+}
+
+function normalizeAction(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error || "Unknown error");
+}
+
+function classifyXError(message: string): {
+  code: string;
+  retryable: boolean;
+} {
+  const text = message.toLowerCase();
+
+  if (
+    text.includes("not fully configured") ||
+    text.includes("bearer token is not configured")
+  ) {
+    return { code: "X_CONFIG_ERROR", retryable: false };
+  }
+
+  if (
+    text.includes("401") ||
+    text.includes("unauthorized") ||
+    text.includes("write auth verification failed")
+  ) {
+    return { code: "X_AUTH_ERROR", retryable: false };
+  }
+
+  if (
+    text.includes("403") ||
+    text.includes("forbidden")
+  ) {
+    return { code: "X_PERMISSION_ERROR", retryable: false };
+  }
+
+  if (
+    text.includes("429") ||
+    text.includes("rate limit")
+  ) {
+    return { code: "X_RATE_LIMIT", retryable: true };
+  }
+
+  if (
+    text.includes("timeout") ||
+    text.includes("network") ||
+    text.includes("fetch failed") ||
+    text.includes("econnreset") ||
+    text.includes("socket hang up")
+  ) {
+    return { code: "X_NETWORK_ERROR", retryable: true };
+  }
+
+  if (
+    text.includes("media file not found") ||
+    text.includes("media file is empty") ||
+    text.includes("media path is not a file") ||
+    text.includes("media file too large")
+  ) {
+    return { code: "X_MEDIA_ERROR", retryable: false };
+  }
+
+  if (
+    text.includes("too long") ||
+    text.includes("missing social content") ||
+    text.includes("invalid replytotweetid")
+  ) {
+    return { code: "X_INPUT_ERROR", retryable: false };
+  }
+
+  return { code: "X_POST_FAILED", retryable: false };
+}
+
+type PreparedMediaFile = {
+  originalPath: string;
+  resolvedPath: string;
+  fileName: string;
+  size: number;
+};
+
 export class SocialWorker implements Worker {
   readonly name = "social_worker";
 
   constructor(private readonly xAdapter: XAdapter) {}
 
+  private async log(context: ExecutionContext, message: string) {
+    await context.log(message);
+  }
+
+  private validateMediaPaths(
+    mediaPaths?: string[],
+  ): PreparedMediaFile[] {
+    if (!mediaPaths?.length) return [];
+
+    if (mediaPaths.length > 4) {
+      throw new Error(`Too many media files: ${mediaPaths.length} (max 4)`);
+    }
+
+    const prepared: PreparedMediaFile[] = [];
+
+    for (const mediaPath of mediaPaths) {
+      const resolvedPath = path.resolve(mediaPath);
+
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`Media file not found: ${resolvedPath}`);
+      }
+
+      const stat = fs.statSync(resolvedPath);
+
+      if (!stat.isFile()) {
+        throw new Error(`Media path is not a file: ${resolvedPath}`);
+      }
+
+      if (stat.size <= 0) {
+        throw new Error(`Media file is empty: ${resolvedPath}`);
+      }
+
+      prepared.push({
+        originalPath: mediaPath,
+        resolvedPath,
+        fileName: path.basename(resolvedPath),
+        size: stat.size,
+      });
+    }
+
+    return prepared;
+  }
+
+  private buildSuccessOutput(args: {
+    action: string;
+    channel: string;
+    content: string;
+    replyToTweetId?: string;
+    mediaFiles: PreparedMediaFile[];
+    response: unknown;
+  }): Record<string, Json> {
+    const responseJson =
+      typeof args.response === "object" && args.response !== null
+        ? (args.response as Json)
+        : ({ value: String(args.response) } as Json);
+
+    return {
+      published: true,
+      worker: this.name,
+      action: args.action,
+      channel: args.channel,
+      content: args.content,
+      contentLength: args.content.length,
+      replyToTweetId: args.replyToTweetId ?? null,
+      hasReply: Boolean(args.replyToTweetId),
+      mediaCount: args.mediaFiles.length,
+      mediaFiles: args.mediaFiles.map((item) => item.resolvedPath) as Json,
+      response: responseJson,
+    };
+  }
+
   async execute(
     input: Record<string, Json>,
     context: ExecutionContext,
   ): Promise<WorkerExecutionResult> {
-    const action = asString(context.action).toLowerCase();
-    const channel = asString(input.channel || "x").toLowerCase();
+    const action = normalizeAction(context.action);
+    const channel = normalizeChannel(input.channel || "x");
+    const skipVerify = asBoolean(input.skipVerifyWriteAccess, false);
 
-    await context.log(
+    await this.log(
+      context,
       `SocialWorker executing action=${action || "unknown"} channel=${channel}`,
     );
 
@@ -76,19 +246,31 @@ export class SocialWorker implements Worker {
         };
       }
 
-      await context.log(
-        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()} xReadConfigured=${this.xAdapter.isReadConfigured()}`,
+      const xSummary =
+        typeof this.xAdapter.getConfigSummary === "function"
+          ? this.xAdapter.getConfigSummary()
+          : {
+              writeConfigured: this.xAdapter.isConfigured(),
+              readConfigured: this.xAdapter.isReadConfigured(),
+              dryRun: this.xAdapter.isDryRun(),
+            };
+
+      await this.log(
+        context,
+        `SocialWorker X state=${safeJsonStringify(xSummary)}`,
       );
 
       console.log("[SocialWorker] state", {
         action,
         channel,
-        xConfigured: this.xAdapter.isConfigured(),
-        xDryRun: this.xAdapter.isDryRun(),
-        xReadConfigured: this.xAdapter.isReadConfigured(),
+        ...xSummary,
       });
 
-      const content = asString(input.content);
+      const content =
+        asString(input.content) ||
+        asString(input.text) ||
+        asString(input.message);
+
       if (!content) {
         return {
           ok: false,
@@ -103,7 +285,10 @@ export class SocialWorker implements Worker {
         };
       }
 
-      const replyToTweetId = asOptionalString(input.replyToTweetId);
+      const replyToTweetId =
+        asOptionalString(input.replyToTweetId) ||
+        asOptionalString(input.reply_to_tweet_id);
+
       if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
         return {
           ok: false,
@@ -112,106 +297,147 @@ export class SocialWorker implements Worker {
         };
       }
 
-      const mediaPaths = asStringArray(input.mediaPaths);
+      const mediaPaths =
+        asStringArray(input.mediaPaths) ||
+        asStringArray(input.media_paths) ||
+        asStringArray(input.images);
 
-      if (mediaPaths && mediaPaths.length > 4) {
-        return {
-          ok: false,
-          error: `Too many media files: ${mediaPaths.length} (max 4)`,
-        };
-      }
+      const mediaFiles = this.validateMediaPaths(mediaPaths);
 
-      if (mediaPaths?.length) {
-        for (const mediaPath of mediaPaths) {
-          if (!fs.existsSync(mediaPath)) {
-            return {
-              ok: false,
-              error: `Media file not found: ${mediaPath}`,
-            };
-          }
-
-          const stat = fs.statSync(mediaPath);
-          if (!stat.isFile()) {
-            return {
-              ok: false,
-              error: `Media path is not a file: ${mediaPath}`,
-            };
-          }
-
-          if (stat.size <= 0) {
-            return {
-              ok: false,
-              error: `Media file is empty: ${mediaPath}`,
-            };
-          }
-        }
-      }
-
-      await context.log(
-        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaPaths?.length ?? 0} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(content, 80)}`,
+      await this.log(
+        context,
+        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaFiles.length} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(
+          content,
+          100,
+        )}`,
       );
 
       console.log("[SocialWorker] preparing X post", {
         textLength: content.length,
         hasReply: Boolean(replyToTweetId),
-        mediaCount: mediaPaths?.length ?? 0,
-        preview: truncateForLog(content, 80),
+        mediaCount: mediaFiles.length,
+        preview: truncateForLog(content, 100),
+        mediaFiles: mediaFiles.map((item) => ({
+          fileName: item.fileName,
+          size: item.size,
+          resolvedPath: item.resolvedPath,
+        })),
       });
+
+      if (!this.xAdapter.isDryRun() && !this.xAdapter.isConfigured()) {
+        return {
+          ok: false,
+          error:
+            "X write credentials are not fully configured. Required: appKey, appSecret, accessToken, accessSecret",
+        };
+      }
+
+      if (
+        !this.xAdapter.isDryRun() &&
+        !skipVerify &&
+        typeof this.xAdapter.verifyWriteAccess === "function"
+      ) {
+        const verify = await this.xAdapter.verifyWriteAccess();
+
+        await this.log(
+          context,
+          `SocialWorker verifyWriteAccess=${safeJsonStringify({
+            ok: verify.ok,
+            status: verify.status,
+            detail: verify.detail
+              ? truncateForLog(String(verify.detail), 240)
+              : undefined,
+          })}`,
+        );
+
+        console.log("[SocialWorker] verifyWriteAccess", verify);
+
+        if (!verify.ok) {
+          return {
+            ok: false,
+            error:
+              `X write auth verification failed before posting. ` +
+              `This usually means your OAuth 1.0a user token/secret is wrong, ` +
+              `or the X app does not have Read and Write permission, ` +
+              `or you changed app permission but did not regenerate Access Token/Secret. ` +
+              `status=${verify.status ?? "unknown"} detail=${verify.detail ?? "unknown"}`,
+          };
+        }
+      }
 
       const response = await this.xAdapter.createPost({
         text: content,
         replyToTweetId,
-        mediaPaths,
+        mediaPaths: mediaFiles.map((item) => item.resolvedPath),
       });
 
-      const responseJson =
-        typeof response === "object" && response !== null
-          ? (response as Json)
-          : ({
-              value: String(response),
-            } as Json);
-
-      await context.log(
-        `SocialWorker X response=${safeJsonStringify(responseJson)}`,
+      await this.log(
+        context,
+        `SocialWorker X response=${truncateForLog(
+          safeJsonStringify(response),
+          1000,
+        )}`,
       );
 
       console.log("[SocialWorker] X response", response);
 
-      await context.log("SocialWorker X post completed");
+      await this.log(context, "SocialWorker X post completed");
       console.log("[SocialWorker] X post completed");
 
       return {
         ok: true,
-        output: {
-          published: true,
+        output: this.buildSuccessOutput({
           action,
           channel,
           content,
-          contentLength: content.length,
-          replyToTweetId: replyToTweetId ?? null,
-          mediaCount: mediaPaths?.length ?? 0,
-          response: responseJson,
-        },
+          replyToTweetId,
+          mediaFiles,
+          response,
+        }),
       };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Social worker failed";
+      const message = getErrorMessage(error);
+      const classified = classifyXError(message);
 
-      await context.log(
-        `SocialWorker xConfigured=${this.xAdapter.isConfigured()} xDryRun=${this.xAdapter.isDryRun()} xReadConfigured=${this.xAdapter.isReadConfigured()}`,
+      const xSummary =
+        typeof this.xAdapter.getConfigSummary === "function"
+          ? this.xAdapter.getConfigSummary()
+          : {
+              writeConfigured: this.xAdapter.isConfigured(),
+              readConfigured: this.xAdapter.isReadConfigured(),
+              dryRun: this.xAdapter.isDryRun(),
+            };
+
+      await this.log(
+        context,
+        `SocialWorker X state=${safeJsonStringify(xSummary)}`,
       );
-      await context.log(`SocialWorker failed: ${message}`);
+      await this.log(
+        context,
+        `SocialWorker failed code=${classified.code} retryable=${classified.retryable} error=${truncateForLog(
+          message,
+          500,
+        )}`,
+      );
 
       console.error("[SocialWorker] failed", {
-        xConfigured: this.xAdapter.isConfigured(),
-        xDryRun: this.xAdapter.isDryRun(),
-        xReadConfigured: this.xAdapter.isReadConfigured(),
+        ...xSummary,
+        code: classified.code,
+        retryable: classified.retryable,
         error: message,
       });
 
       return {
         ok: false,
         error: message,
+        output: {
+          published: false,
+          worker: this.name,
+          channel,
+          action,
+          errorCode: classified.code,
+          retryable: classified.retryable,
+        },
       };
     }
   }
