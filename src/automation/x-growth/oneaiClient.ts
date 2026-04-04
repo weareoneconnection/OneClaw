@@ -5,7 +5,7 @@ export async function runOneAIWorkflow<TInput>(payload: {
   const baseUrl =
     process.env.ONEAI_API_BASE_URL ??
     process.env.ONEAI_BASE_URL ??
-    "https://oneai-production.up.railway.app";
+    "https://oneai-api-production.up.railway.app";
 
   const adminKey =
     process.env.ONEAI_ADMIN_API_KEY ??
