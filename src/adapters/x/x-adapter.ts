@@ -513,7 +513,6 @@ export class XAdapter {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-      data: body,
     });
 
     return this.parseJsonOrThrow(response, "X create post");
@@ -728,7 +727,12 @@ export class XAdapter {
       data?: any[];
       meta?: { next_token?: string };
     }>(response, "X searchRecentTweets");
+    const x = new XAdapter();
 
+    console.log("[XAdapter] config", x.getConfigSummary());
+
+    const verify = await x.verifyWriteAccess();
+    console.log("[XAdapter] verifyWriteAccess", verify);
     return {
       tweets: Array.isArray(payload.data)
         ? payload.data.map((item) => this.mapTweet(item))
