@@ -26,9 +26,21 @@ export class BullMqTaskQueue implements TaskQueue {
     this.queue = new Queue<EnqueuePayload>(params.queueName, {
       connection: this.connection,
     });
+
+    console.log("[bullmq] queue initialized", {
+      queueName: params.queueName,
+      hasRedisUrl: Boolean(params.redisUrl),
+    });
   }
 
   async enqueue(payload: EnqueuePayload): Promise<void> {
+    console.log("[bullmq] enqueue", {
+      queueName: this.params.queueName,
+      taskId: payload.taskId,
+      taskName: payload.task.taskName,
+      stepsCount: payload.task.steps.length,
+    });
+
     await this.queue.add("run-task", payload, {
       removeOnComplete: 100,
       removeOnFail: 100,
@@ -36,42 +48,91 @@ export class BullMqTaskQueue implements TaskQueue {
   }
 
   async startWorker(): Promise<void> {
-  const worker = new Worker<EnqueuePayload>(
-    this.params.queueName,
-    async (job) => {
-      await this.params.runtime.runTask(job.data.taskId, job.data.task);
-    },
-    {
-      connection: this.connection,
-    },
-  );
+    console.log("[bullmq] starting worker", {
+      queueName: this.params.queueName,
+    });
 
-  worker.on("failed", async (job, error) => {
-    if (!job) return;
+    const worker = new Worker<EnqueuePayload>(
+      this.params.queueName,
+      async (job) => {
+        console.log("[bullmq] processing job", {
+          queueName: this.params.queueName,
+          jobId: job.id,
+          taskId: job.data.taskId,
+          taskName: job.data.task.taskName,
+          stepsCount: job.data.task.steps.length,
+        });
 
-    const message =
-      error instanceof Error ? error.message : "Unknown worker failure";
-
-    await this.params.taskStore.appendLog(
-      job.data.taskId,
-      `[bullmq] ${message}`,
+        await this.params.runtime.runTask(job.data.taskId, job.data.task);
+      },
+      {
+        connection: this.connection,
+      },
     );
 
-    await this.params.taskStore.update(job.data.taskId, (current) => ({
-      ...current,
-      status: "failed",
-    }));
-  });
+    worker.on("ready", () => {
+      console.log("[bullmq] worker ready", {
+        queueName: this.params.queueName,
+      });
+    });
 
-  worker.on("error", (error) => {
-    console.error("[bullmq] worker error:", error);
-  });
+    worker.on("active", (job) => {
+      console.log("[bullmq] job active", {
+        queueName: this.params.queueName,
+        jobId: job.id,
+        taskId: job.data.taskId,
+        taskName: job.data.task.taskName,
+      });
+    });
 
-  worker.on("ready", () => {
-    console.log("[bullmq] worker ready");
-  });
+    worker.on("completed", async (job) => {
+      console.log("[bullmq] job completed", {
+        queueName: this.params.queueName,
+        jobId: job.id,
+        taskId: job.data.taskId,
+        taskName: job.data.task.taskName,
+      });
 
-  // 不要阻塞
-  return;
-}
+      await this.params.taskStore.appendLog(
+        job.data.taskId,
+        `[bullmq] completed`,
+      );
+
+      await this.params.taskStore.update(job.data.taskId, (current) => ({
+        ...current,
+        status: "success",
+      }));
+    });
+
+    worker.on("failed", async (job, error) => {
+      if (!job) return;
+
+      const message =
+        error instanceof Error ? error.message : "Unknown worker failure";
+
+      console.error("[bullmq] job failed", {
+        queueName: this.params.queueName,
+        jobId: job.id,
+        taskId: job.data.taskId,
+        taskName: job.data.task.taskName,
+        error: message,
+      });
+
+      await this.params.taskStore.appendLog(
+        job.data.taskId,
+        `[bullmq] ${message}`,
+      );
+
+      await this.params.taskStore.update(job.data.taskId, (current) => ({
+        ...current,
+        status: "failed",
+      }));
+    });
+
+    worker.on("error", (error) => {
+      console.error("[bullmq] worker error:", error);
+    });
+
+    return;
+  }
 }
