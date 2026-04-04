@@ -91,17 +91,11 @@ function classifyXError(message: string): {
     return { code: "X_AUTH_ERROR", retryable: false };
   }
 
-  if (
-    text.includes("403") ||
-    text.includes("forbidden")
-  ) {
+  if (text.includes("403") || text.includes("forbidden")) {
     return { code: "X_PERMISSION_ERROR", retryable: false };
   }
 
-  if (
-    text.includes("429") ||
-    text.includes("rate limit")
-  ) {
+  if (text.includes("429") || text.includes("rate limit")) {
     return { code: "X_RATE_LIMIT", retryable: true };
   }
 
@@ -145,15 +139,27 @@ type PreparedMediaFile = {
 export class SocialWorker implements Worker {
   readonly name = "social_worker";
 
-  constructor(private readonly xAdapter: XAdapter) {}
+  constructor(private readonly xAdapter: XAdapter) {
+    console.log("[SocialWorker] x summary", xAdapter.getConfigSummary?.());
+    console.log(
+      "[SocialWorker] x write configured",
+      xAdapter.isConfigured(),
+    );
+    console.log(
+      "[SocialWorker] x read configured",
+      xAdapter.isReadConfigured(),
+    );
+    console.log(
+      "[SocialWorker] x dry run",
+      xAdapter.isDryRun(),
+    );
+  }
 
   private async log(context: ExecutionContext, message: string) {
     await context.log(message);
   }
 
-  private validateMediaPaths(
-    mediaPaths?: string[],
-  ): PreparedMediaFile[] {
+  private validateMediaPaths(mediaPaths?: string[]): PreparedMediaFile[] {
     if (!mediaPaths?.length) return [];
 
     if (mediaPaths.length > 4) {
