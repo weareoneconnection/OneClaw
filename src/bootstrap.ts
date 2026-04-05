@@ -16,6 +16,7 @@ import { PostgresTaskStore } from "./db/postgres-task-store.js";
 import { ApiWorker } from "./workers/api/api-worker.js";
 import { BrowserWorker } from "./workers/browser/browser-worker.js";
 import { FileWorker } from "./workers/files/file-worker.js";
+import { ContentWorker } from "./workers/content/content-worker.js";
 import { MessagingWorker } from "./workers/messaging/messaging-worker.js";
 import { SocialWorker } from "./workers/social/social-worker.js";
 import { Web3Worker } from "./workers/web3/web3-worker.js";
@@ -75,6 +76,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new MessagingWorker(telegramAdapter));
   workers.register(new ApiWorker(httpAdapter));
   workers.register(new FileWorker());
+  workers.register(new ContentWorker());
   workers.register(new SocialWorker(xAdapter));
   workers.register(new Web3Worker());
   workers.register(new XReaderWorker(xAdapter));
@@ -125,7 +127,18 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       risk: "medium",
       description: "Send a message",
     },
-
+    {
+    action: "content.generate",
+    workerName: "content_worker",
+    risk: "low",
+    description: "Generate content using LLM",
+    },
+    {
+    action: "content.transform",
+    workerName: "content_worker",
+    risk: "low",
+    description: "Transform content",
+    },
     // API
     {
       action: "api.request",

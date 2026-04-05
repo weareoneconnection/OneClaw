@@ -63,6 +63,8 @@ type ProcessStepResult = {
   decision: StepDecision;
 };
 
+type TemplateContext = Record<string, Record<string, Json | Record<string, Json> | undefined>>;
+
 export class ExecutionRuntime {
   private readonly options: RuntimeOptions = {
     defaultTimeoutMs: 60_000,
@@ -353,12 +355,14 @@ export class ExecutionRuntime {
       return { stepId, decision: "failed" };
     }
 
+    const resolvedInputRecord = await this.resolveInputForStep(taskId, rawInput);
+
     if (policyDecision.requiresApproval) {
       const approvalStatus = await this.handleApprovalRequirement(
         taskId,
         stepId,
         action,
-        this.toJsonRecord(rawInput),
+        resolvedInputRecord,
         existing?.startedAt,
         policyDecision.reason ?? `Approval required for ${action}`,
       );
@@ -406,7 +410,7 @@ export class ExecutionRuntime {
       stepId,
       action,
       worker,
-      this.toJsonRecord(rawInput),
+      resolvedInputRecord,
       retryPolicy,
       timeoutMs,
     );
@@ -442,6 +446,141 @@ export class ExecutionRuntime {
     );
 
     return { stepId, decision: "completed" };
+  }
+
+  private async resolveInputForStep(
+    taskId: string,
+    rawInput: unknown,
+  ): Promise<Record<string, Json>> {
+    const context = await this.buildTemplateContext(taskId);
+    const resolved = this.resolveTemplates(rawInput, context);
+    return this.toJsonRecord(resolved);
+  }
+
+  private async buildTemplateContext(taskId: string): Promise<TemplateContext> {
+    const task = await this.taskStore.get(taskId);
+    if (!task) {
+      throw new Error(`Task not found during template resolution: ${taskId}`);
+    }
+
+    const context: TemplateContext = {};
+
+    for (const step of task.steps) {
+      context[step.stepId] = {
+        output: step.output,
+        error: step.error ?? undefined,
+        status: step.status,
+        artifacts: Array.isArray(step.artifacts)
+          ? (step.artifacts.map((item) => String(item)) as unknown as Json)
+          : undefined,
+      };
+    }
+
+    return context;
+  }
+
+  private resolveTemplates(value: unknown, context: TemplateContext): unknown {
+    if (
+      value === null ||
+      value === undefined ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      return this.resolveTemplateString(value, context);
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => this.resolveTemplates(item, context));
+    }
+
+    if (typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [key, item] of Object.entries(value)) {
+        out[key] = this.resolveTemplates(item, context);
+      }
+      return out;
+    }
+
+    return String(value);
+  }
+
+  private resolveTemplateString(
+    template: string,
+    context: TemplateContext,
+  ): unknown {
+    const exactMatch = template.match(/^\s*\{\{\s*([^}]+)\s*\}\}\s*$/);
+    if (exactMatch) {
+      const resolved = this.resolveExpression(exactMatch[1], context);
+      return resolved ?? "";
+    }
+
+    return template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, expr) => {
+      const resolved = this.resolveExpression(expr, context);
+
+      if (resolved === null || resolved === undefined) {
+        return "";
+      }
+
+      if (typeof resolved === "string") {
+        return resolved;
+      }
+
+      if (typeof resolved === "number" || typeof resolved === "boolean") {
+        return String(resolved);
+      }
+
+      return JSON.stringify(resolved);
+    });
+  }
+
+  private resolveExpression(
+    expression: string,
+    context: TemplateContext,
+  ): unknown {
+    const path = expression
+      .split(".")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (path.length === 0) {
+      return undefined;
+    }
+
+    const [stepId, ...rest] = path;
+    let current: unknown = context[stepId];
+
+    if (!current) {
+      return undefined;
+    }
+
+    for (const key of rest) {
+      if (current === null || current === undefined) {
+        return undefined;
+      }
+
+      if (Array.isArray(current)) {
+        const index = Number(key);
+        if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+          return undefined;
+        }
+        current = current[index];
+        continue;
+      }
+
+      if (typeof current === "object") {
+        const record = current as Record<string, unknown>;
+        current = record[key];
+        continue;
+      }
+
+      return undefined;
+    }
+
+    return current;
   }
 
   private async handleApprovalRequirement(
