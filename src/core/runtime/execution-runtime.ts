@@ -63,7 +63,10 @@ type ProcessStepResult = {
   decision: StepDecision;
 };
 
-type TemplateContext = Record<string, Record<string, Json | Record<string, Json> | undefined>>;
+type TemplateContext = Record<
+  string,
+  Record<string, Json | Record<string, Json> | undefined>
+>;
 
 export class ExecutionRuntime {
   private readonly options: RuntimeOptions = {
@@ -74,6 +77,24 @@ export class ExecutionRuntime {
     },
     maxParallelSteps: 2,
   };
+
+  private readonly placeholderTexts = new Set(
+    [
+      "",
+      "done",
+      "ok",
+      "success",
+      "completed",
+      "execution completed",
+      "execution completed successfully",
+      "execution completed successfully.",
+      "planning task",
+      "planning task...",
+      "result",
+      "summary",
+      "final result",
+    ].map((item) => item.toLowerCase()),
+  );
 
   constructor(
     private readonly capabilities: CapabilityRegistry,
@@ -355,7 +376,11 @@ export class ExecutionRuntime {
       return { stepId, decision: "failed" };
     }
 
-    const resolvedInputRecord = await this.resolveInputForStep(taskId, rawInput);
+    const resolvedInputRecord = await this.resolveInputForStep(
+      taskId,
+      action,
+      rawInput,
+    );
 
     if (policyDecision.requiresApproval) {
       const approvalStatus = await this.handleApprovalRequirement(
@@ -450,11 +475,13 @@ export class ExecutionRuntime {
 
   private async resolveInputForStep(
     taskId: string,
+    action: string,
     rawInput: unknown,
   ): Promise<Record<string, Json>> {
     const context = await this.buildTemplateContext(taskId);
     const resolved = this.resolveTemplates(rawInput, context);
-    return this.toJsonRecord(resolved);
+    const record = this.toJsonRecord(resolved);
+    return this.enrichFinalInputIfNeeded(taskId, action, record);
   }
 
   private async buildTemplateContext(taskId: string): Promise<TemplateContext> {
@@ -466,6 +493,8 @@ export class ExecutionRuntime {
     const context: TemplateContext = {};
 
     for (const step of task.steps) {
+      const outputRecord = this.asRecord(step.output);
+
       context[step.stepId] = {
         output: step.output,
         error: step.error ?? undefined,
@@ -473,6 +502,27 @@ export class ExecutionRuntime {
         artifacts: Array.isArray(step.artifacts)
           ? (step.artifacts.map((item) => String(item)) as unknown as Json)
           : undefined,
+
+        // aliases for easier templating
+        text:
+          this.pickFirstString(
+            outputRecord?.text,
+            outputRecord?.content,
+            outputRecord?.body,
+          ) ?? undefined,
+        content:
+          this.pickFirstString(
+            outputRecord?.content,
+            outputRecord?.text,
+            outputRecord?.body,
+          ) ?? undefined,
+        title: this.asStringOrUndefined(outputRecord?.title),
+        url: this.asStringOrUndefined(outputRecord?.url),
+        body: outputRecord?.body as Json | Record<string, Json> | undefined,
+        html: outputRecord?.html as Json | Record<string, Json> | undefined,
+        summary:
+          this.pickFirstString(outputRecord?.summary, outputRecord?.text) ??
+          undefined,
       };
     }
 
@@ -581,6 +631,178 @@ export class ExecutionRuntime {
     }
 
     return current;
+  }
+
+  private async enrichFinalInputIfNeeded(
+    taskId: string,
+    action: string,
+    input: Record<string, Json>,
+  ): Promise<Record<string, Json>> {
+    if (action !== "message.send" && action !== "social.post") {
+      return input;
+    }
+
+    const currentText =
+      typeof input.text === "string" ? input.text.trim() : "";
+
+    if (!this.shouldAutoHydrateText(currentText)) {
+      return input;
+    }
+
+    const task = await this.taskStore.get(taskId);
+    if (!task) {
+      return input;
+    }
+
+    const fallbackText = this.buildFallbackTextFromTask(task);
+    if (!fallbackText) {
+      return input;
+    }
+
+    return {
+      ...input,
+      text: fallbackText,
+    };
+  }
+
+  private shouldAutoHydrateText(text: string): boolean {
+    if (!text) return true;
+
+    const normalized = text.trim().toLowerCase();
+    if (this.placeholderTexts.has(normalized)) {
+      return true;
+    }
+
+    if (
+      normalized === "final result" ||
+      normalized === "actual summary" ||
+      normalized === "summary content"
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private buildFallbackTextFromTask(task: TaskRunRecord): string | undefined {
+    const successfulSteps = [...task.steps].filter((step) => step.status === "success");
+
+    if (successfulSteps.length === 0) {
+      return undefined;
+    }
+
+    const preferredStep = [...successfulSteps]
+      .reverse()
+      .find((step) => {
+        const output = this.asRecord(step.output);
+        return Boolean(
+          this.pickFirstString(
+            output?.summary,
+            output?.content,
+            output?.text,
+            output?.body,
+          ),
+        );
+      });
+
+    if (!preferredStep) {
+      return undefined;
+    }
+
+    const output = this.asRecord(preferredStep.output);
+    if (!output) {
+      return undefined;
+    }
+
+    const explicitSummary = this.asStringOrUndefined(output.summary);
+    if (explicitSummary) {
+      return explicitSummary;
+    }
+
+    const content = this.pickFirstString(
+      output.content,
+      output.text,
+      output.body,
+    );
+
+    const title = this.asStringOrUndefined(output.title);
+    const url = this.asStringOrUndefined(output.url);
+
+    if (!content) {
+      if (title || url) {
+        return [title ? `Title: ${title}` : "", url ? `URL: ${url}` : ""]
+          .filter(Boolean)
+          .join("\n");
+      }
+      return undefined;
+    }
+
+    const compact = this.compactText(content);
+
+    if (title || url) {
+      const lines: string[] = [];
+      if (title) lines.push(`Title: ${title}`);
+      if (url) lines.push(`URL: ${url}`);
+      lines.push("");
+      lines.push(compact);
+      return lines.join("\n").trim();
+    }
+
+    return compact;
+  }
+
+  private compactText(input: string, maxLength = 1200): string {
+    const cleaned = input
+      .replace(/\r/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+
+    if (cleaned.length <= maxLength) {
+      return cleaned;
+    }
+
+    const sliced = cleaned.slice(0, maxLength);
+    const lastBoundary = Math.max(
+      sliced.lastIndexOf("\n"),
+      sliced.lastIndexOf("。"),
+      sliced.lastIndexOf(". "),
+      sliced.lastIndexOf("! "),
+      sliced.lastIndexOf("? "),
+    );
+
+    if (lastBoundary > Math.floor(maxLength * 0.5)) {
+      return `${sliced.slice(0, lastBoundary).trim()}\n...`;
+    }
+
+    return `${sliced.trim()}...`;
+  }
+
+  private pickFirstString(...values: unknown[]): string | undefined {
+    for (const value of values) {
+      const text = this.asStringOrUndefined(value);
+      if (text) return text;
+    }
+    return undefined;
+  }
+
+  private asStringOrUndefined(value: unknown): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === "string") {
+      const text = value.trim();
+      return text ? text : undefined;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    return undefined;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    return value as Record<string, unknown>;
   }
 
   private async handleApprovalRequirement(
