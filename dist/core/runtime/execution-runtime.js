@@ -14,6 +14,21 @@ export class ExecutionRuntime {
         },
         maxParallelSteps: 2,
     };
+    placeholderTexts = new Set([
+        "",
+        "done",
+        "ok",
+        "success",
+        "completed",
+        "execution completed",
+        "execution completed successfully",
+        "execution completed successfully.",
+        "planning task",
+        "planning task...",
+        "result",
+        "summary",
+        "final result",
+    ].map((item) => item.toLowerCase()));
     constructor(capabilities, workers, policy, taskStore, sessionManager) {
         this.capabilities = capabilities;
         this.workers = workers;
@@ -202,8 +217,9 @@ export class ExecutionRuntime {
             await this.failStep(taskId, stepId, action, policyDecision.reason ?? "Blocked by policy");
             return { stepId, decision: "failed" };
         }
+        const resolvedInputRecord = await this.resolveInputForStep(taskId, action, rawInput);
         if (policyDecision.requiresApproval) {
-            const approvalStatus = await this.handleApprovalRequirement(taskId, stepId, action, this.toJsonRecord(rawInput), existing?.startedAt, policyDecision.reason ?? `Approval required for ${action}`);
+            const approvalStatus = await this.handleApprovalRequirement(taskId, stepId, action, resolvedInputRecord, existing?.startedAt, policyDecision.reason ?? `Approval required for ${action}`);
             if (approvalStatus === "awaiting_approval") {
                 return { stepId, decision: "awaiting_approval" };
             }
@@ -225,7 +241,7 @@ export class ExecutionRuntime {
         }
         const retryPolicy = this.getRetryPolicy(action);
         const timeoutMs = this.getTimeoutMs(action);
-        const result = await this.executeWorkerWithRetry(taskId, stepId, action, worker, this.toJsonRecord(rawInput), retryPolicy, timeoutMs);
+        const result = await this.executeWorkerWithRetry(taskId, stepId, action, worker, resolvedInputRecord, retryPolicy, timeoutMs);
         if (!result.ok) {
             await this.taskStore.upsertStep(taskId, buildStepResult({
                 stepId,
@@ -248,6 +264,239 @@ export class ExecutionRuntime {
             artifacts: result.artifacts,
         }));
         return { stepId, decision: "completed" };
+    }
+    async resolveInputForStep(taskId, action, rawInput) {
+        const context = await this.buildTemplateContext(taskId);
+        const resolved = this.resolveTemplates(rawInput, context);
+        const record = this.toJsonRecord(resolved);
+        return this.enrichFinalInputIfNeeded(taskId, action, record);
+    }
+    async buildTemplateContext(taskId) {
+        const task = await this.taskStore.get(taskId);
+        if (!task) {
+            throw new Error(`Task not found during template resolution: ${taskId}`);
+        }
+        const context = {};
+        for (const step of task.steps) {
+            const outputRecord = this.asRecord(step.output);
+            context[step.stepId] = {
+                output: step.output,
+                error: step.error ?? undefined,
+                status: step.status,
+                artifacts: Array.isArray(step.artifacts)
+                    ? step.artifacts.map((item) => String(item))
+                    : undefined,
+                // aliases for easier templating
+                text: this.pickFirstString(outputRecord?.text, outputRecord?.content, outputRecord?.body) ?? undefined,
+                content: this.pickFirstString(outputRecord?.content, outputRecord?.text, outputRecord?.body) ?? undefined,
+                title: this.asStringOrUndefined(outputRecord?.title),
+                url: this.asStringOrUndefined(outputRecord?.url),
+                body: outputRecord?.body,
+                html: outputRecord?.html,
+                summary: this.pickFirstString(outputRecord?.summary, outputRecord?.text) ??
+                    undefined,
+            };
+        }
+        return context;
+    }
+    resolveTemplates(value, context) {
+        if (value === null ||
+            value === undefined ||
+            typeof value === "number" ||
+            typeof value === "boolean") {
+            return value;
+        }
+        if (typeof value === "string") {
+            return this.resolveTemplateString(value, context);
+        }
+        if (Array.isArray(value)) {
+            return value.map((item) => this.resolveTemplates(item, context));
+        }
+        if (typeof value === "object") {
+            const out = {};
+            for (const [key, item] of Object.entries(value)) {
+                out[key] = this.resolveTemplates(item, context);
+            }
+            return out;
+        }
+        return String(value);
+    }
+    resolveTemplateString(template, context) {
+        const exactMatch = template.match(/^\s*\{\{\s*([^}]+)\s*\}\}\s*$/);
+        if (exactMatch) {
+            const resolved = this.resolveExpression(exactMatch[1], context);
+            return resolved ?? "";
+        }
+        return template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, expr) => {
+            const resolved = this.resolveExpression(expr, context);
+            if (resolved === null || resolved === undefined) {
+                return "";
+            }
+            if (typeof resolved === "string") {
+                return resolved;
+            }
+            if (typeof resolved === "number" || typeof resolved === "boolean") {
+                return String(resolved);
+            }
+            return JSON.stringify(resolved);
+        });
+    }
+    resolveExpression(expression, context) {
+        const path = expression
+            .split(".")
+            .map((part) => part.trim())
+            .filter(Boolean);
+        if (path.length === 0) {
+            return undefined;
+        }
+        const [stepId, ...rest] = path;
+        let current = context[stepId];
+        if (!current) {
+            return undefined;
+        }
+        for (const key of rest) {
+            if (current === null || current === undefined) {
+                return undefined;
+            }
+            if (Array.isArray(current)) {
+                const index = Number(key);
+                if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+                    return undefined;
+                }
+                current = current[index];
+                continue;
+            }
+            if (typeof current === "object") {
+                const record = current;
+                current = record[key];
+                continue;
+            }
+            return undefined;
+        }
+        return current;
+    }
+    async enrichFinalInputIfNeeded(taskId, action, input) {
+        if (action !== "message.send" && action !== "social.post") {
+            return input;
+        }
+        const currentText = typeof input.text === "string" ? input.text.trim() : "";
+        if (!this.shouldAutoHydrateText(currentText)) {
+            return input;
+        }
+        const task = await this.taskStore.get(taskId);
+        if (!task) {
+            return input;
+        }
+        const fallbackText = this.buildFallbackTextFromTask(task);
+        if (!fallbackText) {
+            return input;
+        }
+        return {
+            ...input,
+            text: fallbackText,
+        };
+    }
+    shouldAutoHydrateText(text) {
+        if (!text)
+            return true;
+        const normalized = text.trim().toLowerCase();
+        if (this.placeholderTexts.has(normalized)) {
+            return true;
+        }
+        if (normalized === "final result" ||
+            normalized === "actual summary" ||
+            normalized === "summary content") {
+            return true;
+        }
+        return false;
+    }
+    buildFallbackTextFromTask(task) {
+        const successfulSteps = [...task.steps].filter((step) => step.status === "success");
+        if (successfulSteps.length === 0) {
+            return undefined;
+        }
+        const preferredStep = [...successfulSteps]
+            .reverse()
+            .find((step) => {
+            const output = this.asRecord(step.output);
+            return Boolean(this.pickFirstString(output?.summary, output?.content, output?.text, output?.body));
+        });
+        if (!preferredStep) {
+            return undefined;
+        }
+        const output = this.asRecord(preferredStep.output);
+        if (!output) {
+            return undefined;
+        }
+        const explicitSummary = this.asStringOrUndefined(output.summary);
+        if (explicitSummary) {
+            return explicitSummary;
+        }
+        const content = this.pickFirstString(output.content, output.text, output.body);
+        const title = this.asStringOrUndefined(output.title);
+        const url = this.asStringOrUndefined(output.url);
+        if (!content) {
+            if (title || url) {
+                return [title ? `Title: ${title}` : "", url ? `URL: ${url}` : ""]
+                    .filter(Boolean)
+                    .join("\n");
+            }
+            return undefined;
+        }
+        const compact = this.compactText(content);
+        if (title || url) {
+            const lines = [];
+            if (title)
+                lines.push(`Title: ${title}`);
+            if (url)
+                lines.push(`URL: ${url}`);
+            lines.push("");
+            lines.push(compact);
+            return lines.join("\n").trim();
+        }
+        return compact;
+    }
+    compactText(input, maxLength = 1200) {
+        const cleaned = input
+            .replace(/\r/g, "\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .replace(/[ \t]{2,}/g, " ")
+            .trim();
+        if (cleaned.length <= maxLength) {
+            return cleaned;
+        }
+        const sliced = cleaned.slice(0, maxLength);
+        const lastBoundary = Math.max(sliced.lastIndexOf("\n"), sliced.lastIndexOf("。"), sliced.lastIndexOf(". "), sliced.lastIndexOf("! "), sliced.lastIndexOf("? "));
+        if (lastBoundary > Math.floor(maxLength * 0.5)) {
+            return `${sliced.slice(0, lastBoundary).trim()}\n...`;
+        }
+        return `${sliced.trim()}...`;
+    }
+    pickFirstString(...values) {
+        for (const value of values) {
+            const text = this.asStringOrUndefined(value);
+            if (text)
+                return text;
+        }
+        return undefined;
+    }
+    asStringOrUndefined(value) {
+        if (value === null || value === undefined)
+            return undefined;
+        if (typeof value === "string") {
+            const text = value.trim();
+            return text ? text : undefined;
+        }
+        if (typeof value === "number" || typeof value === "boolean") {
+            return String(value);
+        }
+        return undefined;
+    }
+    asRecord(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+            return undefined;
+        }
+        return value;
     }
     async handleApprovalRequirement(taskId, stepId, action, input, existingStartedAt, reason) {
         const pending = await this.taskStore.getPendingApproval(taskId, stepId);

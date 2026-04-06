@@ -44,12 +44,32 @@ export declare class XAdapter {
     private readonly maxMediaSizeBytes;
     private readonly maxPostLength;
     constructor(creds?: XAdapterCreds);
+    private mask;
+    getConfigSummary(): {
+        appKey: string;
+        appSecret: string;
+        accessToken: string;
+        accessSecret: string;
+        bearerToken: string;
+        dryRun: boolean;
+        writeConfigured: boolean;
+        readConfigured: boolean;
+        requestTimeoutMs: number;
+        maxMediaSizeBytes: number;
+        maxPostLength: number;
+    };
     private getWriteAuth;
     private signedFetch;
     private getReadAuthHeader;
     private bearerFetch;
     private fetchWithTimeout;
     private parseJsonOrThrow;
+    verifyWriteAccess(): Promise<{
+        ok: boolean;
+        status?: number;
+        detail?: string;
+        data?: unknown;
+    }>;
     uploadMedia(mediaPath: string): Promise<string>;
     createPost(params: XCreatePostParams): Promise<unknown>;
     tweet(text: string): Promise<unknown>;

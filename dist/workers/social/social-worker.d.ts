@@ -5,5 +5,8 @@ export declare class SocialWorker implements Worker {
     private readonly xAdapter;
     readonly name = "social_worker";
     constructor(xAdapter: XAdapter);
+    private log;
+    private validateMediaPaths;
+    private buildSuccessOutput;
     execute(input: Record<string, Json>, context: ExecutionContext): Promise<WorkerExecutionResult>;
 }

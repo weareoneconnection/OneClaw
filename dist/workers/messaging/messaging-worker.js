@@ -69,8 +69,10 @@ export class MessagingWorker {
             output: {
                 delivered: true,
                 provider,
-                response: toJson(response),
                 chatId,
+                text, // 关键：把实际发送内容带回去
+                parseMode: parseMode ?? null,
+                response: toJson(response),
             },
         };
     }
