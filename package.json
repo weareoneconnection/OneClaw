@@ -12,7 +12,7 @@
     "start:worker": "node dist/worker.js",
     "check": "tsc --noEmit -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
-    "growth:x": "tsx src/automation/x-growth/index.ts",
+    "growth:x": "node dist/automation/x-growth/index.js",
     "dev:all": "npm run migrate && npm run dev"
   },
   "dependencies": {
