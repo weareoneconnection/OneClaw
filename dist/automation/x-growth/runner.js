@@ -177,9 +177,7 @@ export class XGrowthRunner {
             const errorCode = asString(output["errorCode"]);
             const replyToTweetId = normalizeTweetId(output["replyToTweetId"]);
             const shouldBlockReplyTarget = Boolean(output["shouldBlockReplyTarget"]);
-            if (errorCode === "X_REPLY_RESTRICTED" &&
-                shouldBlockReplyTarget &&
-                replyToTweetId) {
+            if (errorCode === "X_REPLY_RESTRICTED" && replyToTweetId) {
                 blocked.add(replyToTweetId);
             }
         };
@@ -240,6 +238,7 @@ export class XGrowthRunner {
             approvalMode: "auto",
             steps: executableSteps,
         }));
+        console.log("[x-growth] publisher taskResult raw =", JSON.stringify(taskResult, null, 2));
         const newState = this.stateStore.load();
         newState.lastPublisherRunAt = nowIso();
         if (!taskResult || taskResult.ok === false) {
@@ -361,6 +360,7 @@ export class XGrowthRunner {
             approvalMode: "auto",
             steps: executableSteps,
         }));
+        console.log("[x-growth] engage taskResult raw =", JSON.stringify(taskResult, null, 2));
         const newState = this.stateStore.load();
         newState.lastEngageRunAt = nowIso();
         if (!taskResult || taskResult.ok === false) {
