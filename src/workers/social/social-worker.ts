@@ -70,6 +70,15 @@ function getErrorMessage(error: unknown): string {
   return String(error || "Unknown error");
 }
 
+function isReplyRestrictionError(message: string): boolean {
+  const text = message.toLowerCase();
+  return (
+    text.includes("reply to this conversation is not allowed") ||
+    text.includes("have not been mentioned") ||
+    text.includes("otherwise engaged by the author")
+  );
+}
+
 function classifyXError(message: string): {
   code: string;
   retryable: boolean;
@@ -89,6 +98,10 @@ function classifyXError(message: string): {
     text.includes("write auth verification failed")
   ) {
     return { code: "X_AUTH_ERROR", retryable: false };
+  }
+
+  if (isReplyRestrictionError(message)) {
+    return { code: "X_REPLY_RESTRICTED", retryable: false };
   }
 
   if (text.includes("403") || text.includes("forbidden")) {
@@ -236,6 +249,10 @@ export class SocialWorker implements Worker {
       `SocialWorker executing action=${action || "unknown"} channel=${channel} mode=${mode || "default"} strictReply=${strictReply}`,
     );
 
+    const replyToTweetId =
+      asOptionalString(input.replyToTweetId) ||
+      asOptionalString(input.reply_to_tweet_id);
+
     try {
       if (action !== "social.post") {
         return {
@@ -291,10 +308,6 @@ export class SocialWorker implements Worker {
           error: `Social content too long: ${content.length} characters (max 280)`,
         };
       }
-
-      const replyToTweetId =
-        asOptionalString(input.replyToTweetId) ||
-        asOptionalString(input.reply_to_tweet_id);
 
       if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
         return {
@@ -450,6 +463,7 @@ export class SocialWorker implements Worker {
         error: message,
         mode,
         strictReply,
+        replyToTweetId: replyToTweetId ?? null,
       });
 
       return {
@@ -462,8 +476,11 @@ export class SocialWorker implements Worker {
           action,
           mode,
           strictReply,
+          replyToTweetId: replyToTweetId ?? null,
           errorCode: classified.code,
           retryable: classified.retryable,
+          shouldBlockReplyTarget:
+            classified.code === "X_REPLY_RESTRICTED" && Boolean(replyToTweetId),
         },
       };
     }

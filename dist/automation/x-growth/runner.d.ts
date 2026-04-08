@@ -12,6 +12,7 @@ export declare class XGrowthRunner {
     private validatePublisherStep;
     private validateEngageStep;
     private logStepSummary;
+    private collectRestrictedReplyTargets;
     runPublisher(): Promise<void>;
     runEngage(): Promise<void>;
     runLoop(): Promise<void>;

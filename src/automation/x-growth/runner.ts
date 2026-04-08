@@ -62,6 +62,19 @@ type GrowthCandidate = {
   }>;
 };
 
+type TaskExecutionResult = {
+  ok?: boolean;
+  error?: string;
+  output?: Record<string, unknown>;
+};
+
+type TaskExecutionEnvelope = {
+  ok?: boolean;
+  results?: TaskExecutionResult[];
+  output?: Record<string, unknown>;
+  error?: string;
+};
+
 export class XGrowthRunner {
   private readonly xAdapter: XAdapter;
   private readonly stateStore: XGrowthStateStore;
@@ -207,6 +220,13 @@ export class XGrowthRunner {
       };
     }
 
+    if (state.blockedReplyTweetIds.includes(replyToTweetId)) {
+      return {
+        ok: false,
+        reason: `reply target is blocked due to prior restriction: ${replyToTweetId}`,
+      };
+    }
+
     const hash = this.stateStore.hashContent(content);
     if (state.seenContentHashes.includes(hash)) {
       return { ok: false, reason: "duplicate reply content hash" };
@@ -232,6 +252,52 @@ export class XGrowthRunner {
       ),
     );
   }
+
+  private collectRestrictedReplyTargets(result: unknown): string[] {
+  const blocked = new Set<string>();
+  const envelope = (result ?? {}) as TaskExecutionEnvelope;
+
+  const toOutputRecord = (
+    item: TaskExecutionResult | Record<string, unknown> | undefined,
+  ): Record<string, unknown> => {
+    if (!item || typeof item !== "object") return {};
+
+    const maybeOutput =
+      "output" in item && item.output && typeof item.output === "object"
+        ? item.output
+        : item;
+
+    return maybeOutput && typeof maybeOutput === "object"
+      ? (maybeOutput as Record<string, unknown>)
+      : {};
+  };
+
+  const scanItem = (
+    item: TaskExecutionResult | Record<string, unknown> | undefined,
+  ) => {
+    const output = toOutputRecord(item);
+
+    const errorCode = asString(output["errorCode"]);
+    const replyToTweetId = normalizeTweetId(output["replyToTweetId"]);
+    const shouldBlockReplyTarget = Boolean(output["shouldBlockReplyTarget"]);
+
+    if (
+      errorCode === "X_REPLY_RESTRICTED" &&
+      shouldBlockReplyTarget &&
+      replyToTweetId
+    ) {
+      blocked.add(replyToTweetId);
+    }
+  };
+
+  scanItem(envelope.output);
+
+  for (const item of asArray(envelope.results)) {
+    scanItem(item);
+  }
+
+  return Array.from(blocked);
+}
 
   async runPublisher(): Promise<void> {
     const state = this.stateStore.load();
@@ -349,6 +415,7 @@ export class XGrowthRunner {
       if (!tweetId) return false;
       if (!isLikelyTweetId(tweetId)) return false;
       if (state.seenReplyTweetIds.includes(tweetId)) return false;
+      if (state.blockedReplyTweetIds.includes(tweetId)) return false;
       if (this.isSelfCandidate(tweet)) return false;
 
       return true;
@@ -383,7 +450,7 @@ export class XGrowthRunner {
       task: "x_engage",
       input: {
         message:
-          "Review these candidate tweets and reply when the interaction creates real credibility, useful visibility, or builder-grade positioning for OneAI. IMPORTANT: output reply tasks only. Never output a standalone post.",
+          "Review these candidate tweets and reply only when: 1) the tweet is likely open to public replies, 2) the author appears to welcome discussion, and 3) the interaction creates real credibility, useful visibility, or builder-grade positioning for OneAI. IMPORTANT: output reply tasks only. Never output a standalone post. Avoid tweets that look like restricted brand announcements, gated conversations, or posts where replies may be limited to mentioned or already-engaged users.",
         lang: "en",
         candidateTweets: filteredCandidates,
       },
@@ -457,20 +524,33 @@ export class XGrowthRunner {
       ),
     );
 
-    await executeOneClawTask({
+    const taskResult = await executeOneClawTask({
       taskName: task.taskName,
       approvalMode: "auto",
       steps: executableSteps,
     });
 
+    const restrictedReplyTargets = this.collectRestrictedReplyTargets(taskResult);
+
     const newState = this.stateStore.load();
     newState.lastEngageRunAt = nowIso();
+
+    if (restrictedReplyTargets.length) {
+      for (const tweetId of restrictedReplyTargets) {
+        this.stateStore.addBlockedReplyTweetId(newState, tweetId);
+      }
+
+      console.warn(
+        "[x-growth] blocked restricted reply targets=",
+        JSON.stringify(restrictedReplyTargets, null, 2),
+      );
+    }
 
     for (const step of executableSteps) {
       const replyToTweetId = asString(step.input?.replyToTweetId);
       const content = asString(step.input?.content);
 
-      if (replyToTweetId) {
+      if (replyToTweetId && !restrictedReplyTargets.includes(replyToTweetId)) {
         this.stateStore.addSeenReplyTweetId(newState, replyToTweetId);
       }
 

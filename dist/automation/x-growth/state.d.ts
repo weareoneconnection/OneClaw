@@ -1,11 +1,24 @@
-import type { XSafetyState } from "./types.js";
+export type XGrowthState = {
+    lastPublisherRunAt?: string;
+    lastEngageRunAt?: string;
+    dailyPostCount: number;
+    dailyReplyCount: number;
+    failureStreak: number;
+    seenContentHashes: string[];
+    seenReplyTweetIds: string[];
+    blockedReplyTweetIds: string[];
+    lastResetDate: string;
+};
 export declare class XGrowthStateStore {
     private readonly filePath;
     constructor(filePath: string);
-    load(): XSafetyState;
-    save(state: XSafetyState): void;
-    hashContent(content: string): string;
-    addSeenReplyTweetId(state: XSafetyState, tweetId: string): void;
-    addSeenContentHash(state: XSafetyState, hash: string): void;
     private ensureDir;
+    private getDefaultState;
+    private normalizeState;
+    load(): XGrowthState;
+    save(state: XGrowthState): void;
+    hashContent(content: string): string;
+    addSeenContentHash(state: XGrowthState, hash: string): void;
+    addSeenReplyTweetId(state: XGrowthState, tweetId: string): void;
+    addBlockedReplyTweetId(state: XGrowthState, tweetId: string): void;
 }

@@ -59,6 +59,12 @@ function getErrorMessage(error) {
         return error.message;
     return String(error || "Unknown error");
 }
+function isReplyRestrictionError(message) {
+    const text = message.toLowerCase();
+    return (text.includes("reply to this conversation is not allowed") ||
+        text.includes("have not been mentioned") ||
+        text.includes("otherwise engaged by the author"));
+}
 function classifyXError(message) {
     const text = message.toLowerCase();
     if (text.includes("not fully configured") ||
@@ -69,6 +75,9 @@ function classifyXError(message) {
         text.includes("unauthorized") ||
         text.includes("write auth verification failed")) {
         return { code: "X_AUTH_ERROR", retryable: false };
+    }
+    if (isReplyRestrictionError(message)) {
+        return { code: "X_REPLY_RESTRICTED", retryable: false };
     }
     if (text.includes("403") || text.includes("forbidden")) {
         return { code: "X_PERMISSION_ERROR", retryable: false };
@@ -166,6 +175,8 @@ export class SocialWorker {
         const strictReply = asBoolean(input.strictReply, false);
         const mode = asString(input.mode).toLowerCase();
         await this.log(context, `SocialWorker executing action=${action || "unknown"} channel=${channel} mode=${mode || "default"} strictReply=${strictReply}`);
+        const replyToTweetId = asOptionalString(input.replyToTweetId) ||
+            asOptionalString(input.reply_to_tweet_id);
         try {
             if (action !== "social.post") {
                 return {
@@ -209,8 +220,6 @@ export class SocialWorker {
                     error: `Social content too long: ${content.length} characters (max 280)`,
                 };
             }
-            const replyToTweetId = asOptionalString(input.replyToTweetId) ||
-                asOptionalString(input.reply_to_tweet_id);
             if (replyToTweetId && !isValidTweetId(replyToTweetId)) {
                 return {
                     ok: false,
@@ -316,6 +325,7 @@ export class SocialWorker {
                 error: message,
                 mode,
                 strictReply,
+                replyToTweetId: replyToTweetId ?? null,
             });
             return {
                 ok: false,
@@ -327,8 +337,10 @@ export class SocialWorker {
                     action,
                     mode,
                     strictReply,
+                    replyToTweetId: replyToTweetId ?? null,
                     errorCode: classified.code,
                     retryable: classified.retryable,
+                    shouldBlockReplyTarget: classified.code === "X_REPLY_RESTRICTED" && Boolean(replyToTweetId),
                 },
             };
         }
