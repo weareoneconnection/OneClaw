@@ -42,10 +42,13 @@ export class XGrowthRunner {
         });
         const statePath = process.env.X_GROWTH_STATE_PATH ??
             path.resolve("./artifacts/x-growth-state.json");
+        console.log("[x-growth] statePath =", statePath);
         this.stateStore = new XGrowthStateStore(statePath);
     }
     getSelfUsername() {
-        return asString(process.env.X_SELF_USERNAME).replace(/^@/, "").toLowerCase();
+        return asString(process.env.X_SELF_USERNAME)
+            .replace(/^@/, "")
+            .toLowerCase();
     }
     getSelfUserId() {
         return asString(process.env.X_SELF_USER_ID);
@@ -232,13 +235,19 @@ export class XGrowthRunner {
                 return;
             }
         }
-        await executeOneClawTask({
+        const taskResult = (await executeOneClawTask({
             taskName: task.taskName,
             approvalMode: "auto",
             steps: executableSteps,
-        });
+        }));
         const newState = this.stateStore.load();
         newState.lastPublisherRunAt = nowIso();
+        if (!taskResult || taskResult.ok === false) {
+            console.warn("[x-growth] publisher execution failed");
+            this.stateStore.recordFailure(newState);
+            this.stateStore.save(newState);
+            return;
+        }
         let newPostCount = 0;
         for (const step of executableSteps) {
             const content = asString(step.input?.content);
@@ -249,11 +258,15 @@ export class XGrowthRunner {
             }
         }
         newState.dailyPostCount += newPostCount;
-        newState.failureStreak = 0;
+        this.stateStore.resetFailure(newState);
         this.stateStore.save(newState);
     }
     async runEngage() {
         const state = this.stateStore.load();
+        if (this.stateStore.shouldPauseEngage(state)) {
+            console.warn("[x-growth] engage paused due to failure streak =", state.failureStreak);
+            return;
+        }
         const gate = canRunEngage(state, defaultXGuardConfig);
         if (!gate.ok) {
             console.log(`[x-growth] skip engage: ${gate.reason}`);
@@ -271,9 +284,9 @@ export class XGrowthRunner {
                 return false;
             if (!isLikelyTweetId(tweetId))
                 return false;
-            if (state.seenReplyTweetIds.includes(tweetId))
+            if (this.stateStore.isBlocked(state, tweetId))
                 return false;
-            if (state.blockedReplyTweetIds.includes(tweetId))
+            if (state.seenReplyTweetIds.includes(tweetId))
                 return false;
             if (this.isSelfCandidate(tweet))
                 return false;
@@ -343,33 +356,44 @@ export class XGrowthRunner {
             strictReply: step.input?.strictReply,
             mode: asString(step.input?.mode),
         })), null, 2));
-        const taskResult = await executeOneClawTask({
+        const taskResult = (await executeOneClawTask({
             taskName: task.taskName,
             approvalMode: "auto",
             steps: executableSteps,
-        });
-        const restrictedReplyTargets = this.collectRestrictedReplyTargets(taskResult);
+        }));
         const newState = this.stateStore.load();
         newState.lastEngageRunAt = nowIso();
+        if (!taskResult || taskResult.ok === false) {
+            console.warn("[x-growth] engage execution failed");
+            this.stateStore.recordFailure(newState);
+            this.stateStore.save(newState);
+            return;
+        }
+        const restrictedReplyTargets = this.collectRestrictedReplyTargets(taskResult);
         if (restrictedReplyTargets.length) {
             for (const tweetId of restrictedReplyTargets) {
                 this.stateStore.addBlockedReplyTweetId(newState, tweetId);
             }
             console.warn("[x-growth] blocked restricted reply targets=", JSON.stringify(restrictedReplyTargets, null, 2));
+            this.stateStore.recordFailure(newState);
         }
+        else {
+            this.stateStore.resetFailure(newState);
+        }
+        let successfulReplyCount = 0;
         for (const step of executableSteps) {
             const replyToTweetId = asString(step.input?.replyToTweetId);
             const content = asString(step.input?.content);
             if (replyToTweetId && !restrictedReplyTargets.includes(replyToTweetId)) {
                 this.stateStore.addSeenReplyTweetId(newState, replyToTweetId);
+                successfulReplyCount += 1;
             }
             if (content) {
                 const hash = this.stateStore.hashContent(content);
                 this.stateStore.addSeenContentHash(newState, hash);
             }
         }
-        newState.dailyReplyCount += executableSteps.length;
-        newState.failureStreak = 0;
+        newState.dailyReplyCount += successfulReplyCount;
         this.stateStore.save(newState);
     }
     async runLoop() {
@@ -379,7 +403,7 @@ export class XGrowthRunner {
         catch (error) {
             console.error("[x-growth] publisher failed:", error);
             const state = this.stateStore.load();
-            state.failureStreak += 1;
+            this.stateStore.recordFailure(state);
             this.stateStore.save(state);
         }
         try {
@@ -388,7 +412,7 @@ export class XGrowthRunner {
         catch (error) {
             console.error("[x-growth] engage failed:", error);
             const state = this.stateStore.load();
-            state.failureStreak += 1;
+            this.stateStore.recordFailure(state);
             this.stateStore.save(state);
         }
     }

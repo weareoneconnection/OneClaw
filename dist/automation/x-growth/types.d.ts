@@ -1,8 +1,14 @@
 export type CandidateTweet = {
     tweetId: string;
-    author?: string;
     text: string;
     createdAt?: string;
+    authorId?: string;
+    username?: string;
+    conversationId?: string;
+    referencedTweets?: Array<{
+        type?: string;
+        id?: string;
+    }>;
 };
 export type XSafetyState = {
     lastPublisherRunAt?: string;

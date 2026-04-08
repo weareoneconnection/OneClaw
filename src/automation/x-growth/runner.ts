@@ -93,12 +93,15 @@ export class XGrowthRunner {
     const statePath =
       process.env.X_GROWTH_STATE_PATH ??
       path.resolve("./artifacts/x-growth-state.json");
+
     console.log("[x-growth] statePath =", statePath);
     this.stateStore = new XGrowthStateStore(statePath);
   }
 
   private getSelfUsername(): string {
-    return asString(process.env.X_SELF_USERNAME).replace(/^@/, "").toLowerCase();
+    return asString(process.env.X_SELF_USERNAME)
+      .replace(/^@/, "")
+      .toLowerCase();
   }
 
   private getSelfUserId(): string {
@@ -157,7 +160,9 @@ export class XGrowthRunner {
     prefix: string,
   ): ExecutableStep[] {
     return steps
-      .map((step, index) => this.toExecutableStep(step, `${prefix}-${index + 1}`))
+      .map((step, index) =>
+        this.toExecutableStep(step, `${prefix}-${index + 1}`),
+      )
       .filter((step): step is ExecutableStep => Boolean(step));
   }
 
@@ -254,50 +259,50 @@ export class XGrowthRunner {
   }
 
   private collectRestrictedReplyTargets(result: unknown): string[] {
-  const blocked = new Set<string>();
-  const envelope = (result ?? {}) as TaskExecutionEnvelope;
+    const blocked = new Set<string>();
+    const envelope = (result ?? {}) as TaskExecutionEnvelope;
 
-  const toOutputRecord = (
-    item: TaskExecutionResult | Record<string, unknown> | undefined,
-  ): Record<string, unknown> => {
-    if (!item || typeof item !== "object") return {};
+    const toOutputRecord = (
+      item: TaskExecutionResult | Record<string, unknown> | undefined,
+    ): Record<string, unknown> => {
+      if (!item || typeof item !== "object") return {};
 
-    const maybeOutput =
-      "output" in item && item.output && typeof item.output === "object"
-        ? item.output
-        : item;
+      const maybeOutput =
+        "output" in item && item.output && typeof item.output === "object"
+          ? item.output
+          : item;
 
-    return maybeOutput && typeof maybeOutput === "object"
-      ? (maybeOutput as Record<string, unknown>)
-      : {};
-  };
+      return maybeOutput && typeof maybeOutput === "object"
+        ? (maybeOutput as Record<string, unknown>)
+        : {};
+    };
 
-  const scanItem = (
-    item: TaskExecutionResult | Record<string, unknown> | undefined,
-  ) => {
-    const output = toOutputRecord(item);
+    const scanItem = (
+      item: TaskExecutionResult | Record<string, unknown> | undefined,
+    ) => {
+      const output = toOutputRecord(item);
 
-    const errorCode = asString(output["errorCode"]);
-    const replyToTweetId = normalizeTweetId(output["replyToTweetId"]);
-    const shouldBlockReplyTarget = Boolean(output["shouldBlockReplyTarget"]);
+      const errorCode = asString(output["errorCode"]);
+      const replyToTweetId = normalizeTweetId(output["replyToTweetId"]);
+      const shouldBlockReplyTarget = Boolean(output["shouldBlockReplyTarget"]);
 
-    if (
-      errorCode === "X_REPLY_RESTRICTED" &&
-      shouldBlockReplyTarget &&
-      replyToTweetId
-    ) {
-      blocked.add(replyToTweetId);
+      if (
+        errorCode === "X_REPLY_RESTRICTED" &&
+        shouldBlockReplyTarget &&
+        replyToTweetId
+      ) {
+        blocked.add(replyToTweetId);
+      }
+    };
+
+    scanItem(envelope.output);
+
+    for (const item of asArray(envelope.results)) {
+      scanItem(item);
     }
-  };
 
-  scanItem(envelope.output);
-
-  for (const item of asArray(envelope.results)) {
-    scanItem(item);
+    return Array.from(blocked);
   }
-
-  return Array.from(blocked);
-}
 
   async runPublisher(): Promise<void> {
     const state = this.stateStore.load();
@@ -362,14 +367,21 @@ export class XGrowthRunner {
       }
     }
 
-    await executeOneClawTask({
-      taskName: task.taskName,
-      approvalMode: "auto",
-      steps: executableSteps,
-    });
+    const taskResult = (await executeOneClawTask({
+  taskName: task.taskName,
+  approvalMode: "auto",
+  steps: executableSteps,
+})) as TaskExecutionEnvelope;
 
-    const newState = this.stateStore.load();
-    newState.lastPublisherRunAt = nowIso();
+const newState = this.stateStore.load();
+newState.lastPublisherRunAt = nowIso();
+
+if (!taskResult || taskResult.ok === false) {
+  console.warn("[x-growth] publisher execution failed");
+  this.stateStore.recordFailure(newState);
+  this.stateStore.save(newState);
+  return;
+}
 
     let newPostCount = 0;
 
@@ -384,13 +396,22 @@ export class XGrowthRunner {
     }
 
     newState.dailyPostCount += newPostCount;
-    newState.failureStreak = 0;
+    this.stateStore.resetFailure(newState);
 
     this.stateStore.save(newState);
   }
 
   async runEngage(): Promise<void> {
     const state = this.stateStore.load();
+
+    if (this.stateStore.shouldPauseEngage(state)) {
+      console.warn(
+        "[x-growth] engage paused due to failure streak =",
+        state.failureStreak,
+      );
+      return;
+    }
+
     const gate = canRunEngage(state, defaultXGuardConfig);
 
     if (!gate.ok) {
@@ -414,8 +435,8 @@ export class XGrowthRunner {
 
       if (!tweetId) return false;
       if (!isLikelyTweetId(tweetId)) return false;
+      if (this.stateStore.isBlocked(state, tweetId)) return false;
       if (state.seenReplyTweetIds.includes(tweetId)) return false;
-      if (state.blockedReplyTweetIds.includes(tweetId)) return false;
       if (this.isSelfCandidate(tweet)) return false;
 
       return true;
@@ -524,16 +545,24 @@ export class XGrowthRunner {
       ),
     );
 
-    const taskResult = await executeOneClawTask({
-      taskName: task.taskName,
-      approvalMode: "auto",
-      steps: executableSteps,
-    });
+    const taskResult = (await executeOneClawTask({
+  taskName: task.taskName,
+  approvalMode: "auto",
+  steps: executableSteps,
+})) as TaskExecutionEnvelope;
 
-    const restrictedReplyTargets = this.collectRestrictedReplyTargets(taskResult);
+const newState = this.stateStore.load();
+newState.lastEngageRunAt = nowIso();
 
-    const newState = this.stateStore.load();
-    newState.lastEngageRunAt = nowIso();
+if (!taskResult || taskResult.ok === false) {
+  console.warn("[x-growth] engage execution failed");
+  this.stateStore.recordFailure(newState);
+  this.stateStore.save(newState);
+  return;
+}
+
+    const restrictedReplyTargets =
+      this.collectRestrictedReplyTargets(taskResult);
 
     if (restrictedReplyTargets.length) {
       for (const tweetId of restrictedReplyTargets) {
@@ -544,7 +573,13 @@ export class XGrowthRunner {
         "[x-growth] blocked restricted reply targets=",
         JSON.stringify(restrictedReplyTargets, null, 2),
       );
+
+      this.stateStore.recordFailure(newState);
+    } else {
+      this.stateStore.resetFailure(newState);
     }
+
+    let successfulReplyCount = 0;
 
     for (const step of executableSteps) {
       const replyToTweetId = asString(step.input?.replyToTweetId);
@@ -552,6 +587,7 @@ export class XGrowthRunner {
 
       if (replyToTweetId && !restrictedReplyTargets.includes(replyToTweetId)) {
         this.stateStore.addSeenReplyTweetId(newState, replyToTweetId);
+        successfulReplyCount += 1;
       }
 
       if (content) {
@@ -560,8 +596,7 @@ export class XGrowthRunner {
       }
     }
 
-    newState.dailyReplyCount += executableSteps.length;
-    newState.failureStreak = 0;
+    newState.dailyReplyCount += successfulReplyCount;
 
     this.stateStore.save(newState);
   }
@@ -572,7 +607,7 @@ export class XGrowthRunner {
     } catch (error) {
       console.error("[x-growth] publisher failed:", error);
       const state = this.stateStore.load();
-      state.failureStreak += 1;
+      this.stateStore.recordFailure(state);
       this.stateStore.save(state);
     }
 
@@ -581,7 +616,7 @@ export class XGrowthRunner {
     } catch (error) {
       console.error("[x-growth] engage failed:", error);
       const state = this.stateStore.load();
-      state.failureStreak += 1;
+      this.stateStore.recordFailure(state);
       this.stateStore.save(state);
     }
   }

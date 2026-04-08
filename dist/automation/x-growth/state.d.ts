@@ -21,4 +21,8 @@ export declare class XGrowthStateStore {
     addSeenContentHash(state: XGrowthState, hash: string): void;
     addSeenReplyTweetId(state: XGrowthState, tweetId: string): void;
     addBlockedReplyTweetId(state: XGrowthState, tweetId: string): void;
+    isBlocked(state: XGrowthState, tweetId: string): boolean;
+    recordFailure(state: XGrowthState): void;
+    resetFailure(state: XGrowthState): void;
+    shouldPauseEngage(state: XGrowthState): boolean;
 }

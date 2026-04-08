@@ -37,13 +37,16 @@ export class XGrowthStateStore {
         const normalized = {
             lastPublisherRunAt: String(input.lastPublisherRunAt ?? "").trim() || undefined,
             lastEngageRunAt: String(input.lastEngageRunAt ?? "").trim() || undefined,
-            dailyPostCount: typeof input.dailyPostCount === "number" && Number.isFinite(input.dailyPostCount)
+            dailyPostCount: typeof input.dailyPostCount === "number" &&
+                Number.isFinite(input.dailyPostCount)
                 ? input.dailyPostCount
                 : base.dailyPostCount,
-            dailyReplyCount: typeof input.dailyReplyCount === "number" && Number.isFinite(input.dailyReplyCount)
+            dailyReplyCount: typeof input.dailyReplyCount === "number" &&
+                Number.isFinite(input.dailyReplyCount)
                 ? input.dailyReplyCount
                 : base.dailyReplyCount,
-            failureStreak: typeof input.failureStreak === "number" && Number.isFinite(input.failureStreak)
+            failureStreak: typeof input.failureStreak === "number" &&
+                Number.isFinite(input.failureStreak)
                 ? input.failureStreak
                 : base.failureStreak,
             seenContentHashes: safeArray(input.seenContentHashes),
@@ -54,6 +57,7 @@ export class XGrowthStateStore {
         if (normalized.lastResetDate !== today) {
             normalized.dailyPostCount = 0;
             normalized.dailyReplyCount = 0;
+            normalized.failureStreak = 0;
             normalized.lastResetDate = today;
         }
         return normalized;
@@ -61,13 +65,20 @@ export class XGrowthStateStore {
     load() {
         try {
             if (!fs.existsSync(this.filePath)) {
-                return this.getDefaultState();
+                const state = this.getDefaultState();
+                console.log("[x-growth-state] load default =", this.filePath);
+                return state;
             }
             const raw = fs.readFileSync(this.filePath, "utf8");
             if (!raw.trim()) {
-                return this.getDefaultState();
+                const state = this.getDefaultState();
+                console.log("[x-growth-state] load empty file, using default =", this.filePath);
+                return state;
             }
-            return this.normalizeState(JSON.parse(raw));
+            const parsed = this.normalizeState(JSON.parse(raw));
+            console.log("[x-growth-state] loaded from =", this.filePath);
+            console.log("[x-growth-state] loaded payload =", JSON.stringify(parsed, null, 2));
+            return parsed;
         }
         catch (error) {
             console.error("[x-growth-state] load failed, using defaults:", error);
@@ -77,6 +88,8 @@ export class XGrowthStateStore {
     save(state) {
         this.ensureDir();
         const normalized = this.normalizeState(state);
+        console.log("[x-growth-state] saving to =", this.filePath);
+        console.log("[x-growth-state] payload =", JSON.stringify(normalized, null, 2));
         fs.writeFileSync(this.filePath, JSON.stringify(normalized, null, 2), "utf8");
     }
     hashContent(content) {
@@ -101,6 +114,7 @@ export class XGrowthStateStore {
         if (!value)
             return;
         if (!state.seenReplyTweetIds.includes(value)) {
+            console.log("[x-growth-state] add SEEN reply tweet =", value);
             state.seenReplyTweetIds.push(value);
         }
         if (state.seenReplyTweetIds.length > 5000) {
@@ -112,10 +126,30 @@ export class XGrowthStateStore {
         if (!value)
             return;
         if (!state.blockedReplyTweetIds.includes(value)) {
+            console.log("[x-growth-state] add BLOCKED tweet =", value);
             state.blockedReplyTweetIds.push(value);
         }
         if (state.blockedReplyTweetIds.length > 5000) {
             state.blockedReplyTweetIds = state.blockedReplyTweetIds.slice(-5000);
         }
+    }
+    isBlocked(state, tweetId) {
+        const value = String(tweetId ?? "").trim();
+        if (!value)
+            return false;
+        return state.blockedReplyTweetIds.includes(value);
+    }
+    recordFailure(state) {
+        state.failureStreak += 1;
+        console.log("[x-growth-state] failureStreak =", state.failureStreak);
+    }
+    resetFailure(state) {
+        if (state.failureStreak !== 0) {
+            console.log("[x-growth-state] reset failureStreak");
+        }
+        state.failureStreak = 0;
+    }
+    shouldPauseEngage(state) {
+        return state.failureStreak >= 3;
     }
 }

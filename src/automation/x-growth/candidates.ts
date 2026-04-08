@@ -9,24 +9,33 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function isRootTweet(tweet: XTweet): boolean {
+  const tweetId = asString(tweet.id);
+  const conversationId = asString(tweet.conversationId);
+  return Boolean(tweetId) && Boolean(conversationId) && tweetId === conversationId;
+}
+
 function isReplyTweet(tweet: XTweet): boolean {
   return Boolean(
     tweet.referencedTweets?.some((item) => item?.type === "replied_to"),
   );
 }
 
-function isLikelyUsefulTweet(tweet: XTweet): boolean {
+function hasRestrictedShape(tweet: XTweet, selfUsername: string, selfUserId: string): boolean {
   const text = normalizeWhitespace(asString(tweet.text));
-
-  if (!tweet.id || !text) return false;
-  if (text.length < 20) return false;
-
   const lowered = text.toLowerCase();
 
-  if (lowered.startsWith("rt ")) return false;
-  if (lowered.startsWith("rt @")) return false;
+  if (!tweet.id || !text) return true;
+  if (text.length < 35) return true;
 
-  if (isReplyTweet(tweet)) return false;
+  if (asString(tweet.authorId) === selfUserId) return true;
+  if (selfUsername && lowered.includes(`@${selfUsername.toLowerCase()}`)) return true;
+
+  if (!isRootTweet(tweet)) return true;
+  if (isReplyTweet(tweet)) return true;
+
+  if (lowered.startsWith("rt ")) return true;
+  if (lowered.startsWith("rt @")) return true;
 
   if (
     lowered.includes("giveaway") ||
@@ -35,11 +44,63 @@ function isLikelyUsefulTweet(tweet: XTweet): boolean {
     lowered.includes("airdrop") ||
     lowered.includes("whitelist") ||
     lowered.includes("pump") ||
-    lowered.includes("100x")
+    lowered.includes("100x") ||
+    lowered.includes("join our telegram") ||
+    lowered.includes("link in bio")
   ) {
-    return false;
+    return true;
   }
 
+  return false;
+}
+
+function hasStrongOpenReplySignal(tweet: XTweet): boolean {
+  const text = normalizeWhitespace(asString(tweet.text));
+  const lowered = text.toLowerCase();
+
+  if (
+    lowered.includes("what do you think") ||
+    lowered.includes("how do you think") ||
+    lowered.includes("share your") ||
+    lowered.includes("drop below") ||
+    lowered.includes("reply below") ||
+    lowered.includes("comment below") ||
+    lowered.includes("builders") ||
+    lowered.includes("thread") ||
+    lowered.includes("thoughts?") ||
+    lowered.includes("agree?") ||
+    lowered.includes("disagree?")
+  ) {
+    return true;
+  }
+
+  if (text.includes("?")) return true;
+
+  return false;
+}
+
+function looksLikeLockedAnnouncement(tweet: XTweet): boolean {
+  const lowered = normalizeWhitespace(asString(tweet.text)).toLowerCase();
+
+  return (
+    lowered.includes("introducing") ||
+    lowered.includes("we are launching") ||
+    lowered.includes("our product") ||
+    lowered.includes("we're rolling out") ||
+    lowered.includes("it’s our honor to present") ||
+    lowered.includes("officially launching") ||
+    lowered.includes("now live")
+  );
+}
+
+function isHighProbabilityReplyTarget(
+  tweet: XTweet,
+  selfUsername: string,
+  selfUserId: string,
+): boolean {
+  if (hasRestrictedShape(tweet, selfUsername, selfUserId)) return false;
+  if (looksLikeLockedAnnouncement(tweet)) return false;
+  if (!hasStrongOpenReplySignal(tweet)) return false;
   return true;
 }
 
@@ -63,12 +124,15 @@ export async function fetchGrowthCandidates(
   x: XAdapter,
 ): Promise<CandidateTweet[]> {
   const queries = [
-    '"AI agents" execution',
-    '"AI automation" workflow',
-    '"execution layer" AI',
-    '"agent infrastructure"',
-    '"AI operator"',
+    '"AI agents" workflow OR "what do you think"',
+    '"AI automation" builders OR "share your"',
+    '"agent infrastructure" thread',
+    '"execution layer" AI question',
+    '"automation" founders thread',
   ];
+
+  const selfUserId = asString(process.env.X_SELF_USER_ID);
+  const selfUsername = asString(process.env.X_SELF_USERNAME).replace(/^@/, "");
 
   const seenTweetIds = new Set<string>();
   const seenTextFingerprints = new Set<string>();
@@ -77,14 +141,16 @@ export async function fetchGrowthCandidates(
   for (const query of queries) {
     let result;
     try {
-      result = await x.searchRecentTweets(query, { maxResults: 8 });
+      result = await x.searchRecentTweets(query, { maxResults: 10 });
     } catch (error) {
       console.error(`[x-growth] candidate query failed: ${query}`, error);
       continue;
     }
 
     for (const tweet of result.tweets) {
-      if (!isLikelyUsefulTweet(tweet)) continue;
+      if (!isHighProbabilityReplyTarget(tweet, selfUsername, selfUserId)) {
+        continue;
+      }
 
       const id = asString(tweet.id);
       if (!id || seenTweetIds.has(id)) continue;
@@ -98,7 +164,7 @@ export async function fetchGrowthCandidates(
       seenTextFingerprints.add(fingerprint);
       out.push(candidate);
 
-      if (out.length >= 12) {
+      if (out.length >= 10) {
         return out;
       }
     }
