@@ -121,7 +121,9 @@ function classifyXError(message: string): {
   if (
     text.includes("too long") ||
     text.includes("missing social content") ||
-    text.includes("invalid replytotweetid")
+    text.includes("invalid replytotweetid") ||
+    text.includes("reply-only task missing replytotweetid") ||
+    text.includes("reply-only task refused")
   ) {
     return { code: "X_INPUT_ERROR", retryable: false };
   }
@@ -141,18 +143,9 @@ export class SocialWorker implements Worker {
 
   constructor(private readonly xAdapter: XAdapter) {
     console.log("[SocialWorker] x summary", xAdapter.getConfigSummary?.());
-    console.log(
-      "[SocialWorker] x write configured",
-      xAdapter.isConfigured(),
-    );
-    console.log(
-      "[SocialWorker] x read configured",
-      xAdapter.isReadConfigured(),
-    );
-    console.log(
-      "[SocialWorker] x dry run",
-      xAdapter.isDryRun(),
-    );
+    console.log("[SocialWorker] x write configured", xAdapter.isConfigured());
+    console.log("[SocialWorker] x read configured", xAdapter.isReadConfigured());
+    console.log("[SocialWorker] x dry run", xAdapter.isDryRun());
   }
 
   private async log(context: ExecutionContext, message: string) {
@@ -203,6 +196,8 @@ export class SocialWorker implements Worker {
     replyToTweetId?: string;
     mediaFiles: PreparedMediaFile[];
     response: unknown;
+    strictReply: boolean;
+    mode: string;
   }): Record<string, Json> {
     const responseJson =
       typeof args.response === "object" && args.response !== null
@@ -214,6 +209,8 @@ export class SocialWorker implements Worker {
       worker: this.name,
       action: args.action,
       channel: args.channel,
+      mode: args.mode,
+      strictReply: args.strictReply,
       content: args.content,
       contentLength: args.content.length,
       replyToTweetId: args.replyToTweetId ?? null,
@@ -231,10 +228,12 @@ export class SocialWorker implements Worker {
     const action = normalizeAction(context.action);
     const channel = normalizeChannel(input.channel || "x");
     const skipVerify = asBoolean(input.skipVerifyWriteAccess, false);
+    const strictReply = asBoolean(input.strictReply, false);
+    const mode = asString(input.mode).toLowerCase();
 
     await this.log(
       context,
-      `SocialWorker executing action=${action || "unknown"} channel=${channel}`,
+      `SocialWorker executing action=${action || "unknown"} channel=${channel} mode=${mode || "default"} strictReply=${strictReply}`,
     );
 
     try {
@@ -269,6 +268,8 @@ export class SocialWorker implements Worker {
       console.log("[SocialWorker] state", {
         action,
         channel,
+        mode,
+        strictReply,
         ...xSummary,
       });
 
@@ -303,6 +304,13 @@ export class SocialWorker implements Worker {
         };
       }
 
+      if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+        return {
+          ok: false,
+          error: "Reply-only task missing replyToTweetId",
+        };
+      }
+
       const mediaPaths =
         asStringArray(input.mediaPaths) ||
         asStringArray(input.media_paths) ||
@@ -312,7 +320,7 @@ export class SocialWorker implements Worker {
 
       await this.log(
         context,
-        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaFiles.length} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(
+        `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaFiles.length} reply=${replyToTweetId ? "yes" : "no"} mode=${mode || "default"} strictReply=${strictReply} preview=${truncateForLog(
           content,
           100,
         )}`,
@@ -321,7 +329,10 @@ export class SocialWorker implements Worker {
       console.log("[SocialWorker] preparing X post", {
         textLength: content.length,
         hasReply: Boolean(replyToTweetId),
+        replyToTweetId: replyToTweetId ?? null,
         mediaCount: mediaFiles.length,
+        mode,
+        strictReply,
         preview: truncateForLog(content, 100),
         mediaFiles: mediaFiles.map((item) => ({
           fileName: item.fileName,
@@ -371,6 +382,10 @@ export class SocialWorker implements Worker {
         }
       }
 
+      if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+        throw new Error("Reply-only task refused to fallback to normal post");
+      }
+
       const response = await this.xAdapter.createPost({
         text: content,
         replyToTweetId,
@@ -399,6 +414,8 @@ export class SocialWorker implements Worker {
           replyToTweetId,
           mediaFiles,
           response,
+          strictReply,
+          mode,
         }),
       };
     } catch (error) {
@@ -431,6 +448,8 @@ export class SocialWorker implements Worker {
         code: classified.code,
         retryable: classified.retryable,
         error: message,
+        mode,
+        strictReply,
       });
 
       return {
@@ -441,6 +460,8 @@ export class SocialWorker implements Worker {
           worker: this.name,
           channel,
           action,
+          mode,
+          strictReply,
           errorCode: classified.code,
           retryable: classified.retryable,
         },

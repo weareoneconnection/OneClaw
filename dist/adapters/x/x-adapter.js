@@ -464,10 +464,6 @@ export class XAdapter {
         const url = `https://api.twitter.com/2/tweets/search/recent${queryString}`;
         const response = await this.bearerFetch(url);
         const payload = await this.parseJsonOrThrow(response, "X searchRecentTweets");
-        const x = new XAdapter();
-        console.log("[XAdapter] config", x.getConfigSummary());
-        const verify = await x.verifyWriteAccess();
-        console.log("[XAdapter] verifyWriteAccess", verify);
         return {
             tweets: Array.isArray(payload.data)
                 ? payload.data.map((item) => this.mapTweet(item))

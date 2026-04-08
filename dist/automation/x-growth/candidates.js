@@ -4,6 +4,9 @@ function asString(value) {
 function normalizeWhitespace(text) {
     return text.replace(/\s+/g, " ").trim();
 }
+function isReplyTweet(tweet) {
+    return Boolean(tweet.referencedTweets?.some((item) => item?.type === "replied_to"));
+}
 function isLikelyUsefulTweet(tweet) {
     const text = normalizeWhitespace(asString(tweet.text));
     if (!tweet.id || !text)
@@ -14,6 +17,8 @@ function isLikelyUsefulTweet(tweet) {
     if (lowered.startsWith("rt "))
         return false;
     if (lowered.startsWith("rt @"))
+        return false;
+    if (isReplyTweet(tweet))
         return false;
     if (lowered.includes("giveaway") ||
         lowered.includes("follow me") ||
@@ -31,6 +36,14 @@ function toCandidate(tweet) {
         tweetId: asString(tweet.id),
         text: normalizeWhitespace(asString(tweet.text)),
         createdAt: asString(tweet.createdAt) || undefined,
+        authorId: asString(tweet.authorId) || undefined,
+        conversationId: asString(tweet.conversationId) || undefined,
+        referencedTweets: tweet.referencedTweets?.length
+            ? tweet.referencedTweets.map((item) => ({
+                type: asString(item.type),
+                id: asString(item.id),
+            }))
+            : undefined,
     };
 }
 export async function fetchGrowthCandidates(x) {
@@ -61,7 +74,7 @@ export async function fetchGrowthCandidates(x) {
                 continue;
             const candidate = toCandidate(tweet);
             const fingerprint = normalizeWhitespace(candidate.text).toLowerCase();
-            if (seenTextFingerprints.has(fingerprint))
+            if (!fingerprint || seenTextFingerprints.has(fingerprint))
                 continue;
             seenTweetIds.add(id);
             seenTextFingerprints.add(fingerprint);

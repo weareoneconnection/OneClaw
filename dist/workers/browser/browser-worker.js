@@ -56,7 +56,7 @@ export class BrowserWorker {
                         waitUntilRaw === "commit"
                         ? waitUntilRaw
                         : "domcontentloaded";
-                    const timeoutMs = asPositiveNumber(input.timeoutMs);
+                    const timeoutMs = asPositiveNumber(input.timeoutMs) ?? 45000;
                     await this.browserAdapter.goto(session.page, url, {
                         waitUntil,
                         timeoutMs,

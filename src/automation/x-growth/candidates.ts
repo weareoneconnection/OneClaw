@@ -9,17 +9,24 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function isReplyTweet(tweet: XTweet): boolean {
+  return Boolean(
+    tweet.referencedTweets?.some((item) => item?.type === "replied_to"),
+  );
+}
+
 function isLikelyUsefulTweet(tweet: XTweet): boolean {
   const text = normalizeWhitespace(asString(tweet.text));
 
   if (!tweet.id || !text) return false;
-
   if (text.length < 20) return false;
 
   const lowered = text.toLowerCase();
 
   if (lowered.startsWith("rt ")) return false;
   if (lowered.startsWith("rt @")) return false;
+
+  if (isReplyTweet(tweet)) return false;
 
   if (
     lowered.includes("giveaway") ||
@@ -41,10 +48,20 @@ function toCandidate(tweet: XTweet): CandidateTweet {
     tweetId: asString(tweet.id),
     text: normalizeWhitespace(asString(tweet.text)),
     createdAt: asString(tweet.createdAt) || undefined,
-  };
+    authorId: asString(tweet.authorId) || undefined,
+    conversationId: asString(tweet.conversationId) || undefined,
+    referencedTweets: tweet.referencedTweets?.length
+      ? tweet.referencedTweets.map((item) => ({
+          type: asString(item.type),
+          id: asString(item.id),
+        }))
+      : undefined,
+  } as CandidateTweet;
 }
 
-export async function fetchGrowthCandidates(x: XAdapter): Promise<CandidateTweet[]> {
+export async function fetchGrowthCandidates(
+  x: XAdapter,
+): Promise<CandidateTweet[]> {
   const queries = [
     '"AI agents" execution',
     '"AI automation" workflow',
@@ -75,7 +92,7 @@ export async function fetchGrowthCandidates(x: XAdapter): Promise<CandidateTweet
       const candidate = toCandidate(tweet);
       const fingerprint = normalizeWhitespace(candidate.text).toLowerCase();
 
-      if (seenTextFingerprints.has(fingerprint)) continue;
+      if (!fingerprint || seenTextFingerprints.has(fingerprint)) continue;
 
       seenTweetIds.add(id);
       seenTextFingerprints.add(fingerprint);

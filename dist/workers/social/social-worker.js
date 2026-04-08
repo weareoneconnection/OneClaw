@@ -91,7 +91,9 @@ function classifyXError(message) {
     }
     if (text.includes("too long") ||
         text.includes("missing social content") ||
-        text.includes("invalid replytotweetid")) {
+        text.includes("invalid replytotweetid") ||
+        text.includes("reply-only task missing replytotweetid") ||
+        text.includes("reply-only task refused")) {
         return { code: "X_INPUT_ERROR", retryable: false };
     }
     return { code: "X_POST_FAILED", retryable: false };
@@ -146,6 +148,8 @@ export class SocialWorker {
             worker: this.name,
             action: args.action,
             channel: args.channel,
+            mode: args.mode,
+            strictReply: args.strictReply,
             content: args.content,
             contentLength: args.content.length,
             replyToTweetId: args.replyToTweetId ?? null,
@@ -159,7 +163,9 @@ export class SocialWorker {
         const action = normalizeAction(context.action);
         const channel = normalizeChannel(input.channel || "x");
         const skipVerify = asBoolean(input.skipVerifyWriteAccess, false);
-        await this.log(context, `SocialWorker executing action=${action || "unknown"} channel=${channel}`);
+        const strictReply = asBoolean(input.strictReply, false);
+        const mode = asString(input.mode).toLowerCase();
+        await this.log(context, `SocialWorker executing action=${action || "unknown"} channel=${channel} mode=${mode || "default"} strictReply=${strictReply}`);
         try {
             if (action !== "social.post") {
                 return {
@@ -184,6 +190,8 @@ export class SocialWorker {
             console.log("[SocialWorker] state", {
                 action,
                 channel,
+                mode,
+                strictReply,
                 ...xSummary,
             });
             const content = asString(input.content) ||
@@ -209,15 +217,24 @@ export class SocialWorker {
                     error: "Invalid replyToTweetId: must be a numeric tweet ID (1-19 digits)",
                 };
             }
+            if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+                return {
+                    ok: false,
+                    error: "Reply-only task missing replyToTweetId",
+                };
+            }
             const mediaPaths = asStringArray(input.mediaPaths) ||
                 asStringArray(input.media_paths) ||
                 asStringArray(input.images);
             const mediaFiles = this.validateMediaPaths(mediaPaths);
-            await this.log(context, `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaFiles.length} reply=${replyToTweetId ? "yes" : "no"} preview=${truncateForLog(content, 100)}`);
+            await this.log(context, `SocialWorker preparing X post textLength=${content.length} mediaCount=${mediaFiles.length} reply=${replyToTweetId ? "yes" : "no"} mode=${mode || "default"} strictReply=${strictReply} preview=${truncateForLog(content, 100)}`);
             console.log("[SocialWorker] preparing X post", {
                 textLength: content.length,
                 hasReply: Boolean(replyToTweetId),
+                replyToTweetId: replyToTweetId ?? null,
                 mediaCount: mediaFiles.length,
+                mode,
+                strictReply,
                 preview: truncateForLog(content, 100),
                 mediaFiles: mediaFiles.map((item) => ({
                     fileName: item.fileName,
@@ -254,6 +271,9 @@ export class SocialWorker {
                     };
                 }
             }
+            if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+                throw new Error("Reply-only task refused to fallback to normal post");
+            }
             const response = await this.xAdapter.createPost({
                 text: content,
                 replyToTweetId,
@@ -272,6 +292,8 @@ export class SocialWorker {
                     replyToTweetId,
                     mediaFiles,
                     response,
+                    strictReply,
+                    mode,
                 }),
             };
         }
@@ -292,6 +314,8 @@ export class SocialWorker {
                 code: classified.code,
                 retryable: classified.retryable,
                 error: message,
+                mode,
+                strictReply,
             });
             return {
                 ok: false,
@@ -301,6 +325,8 @@ export class SocialWorker {
                     worker: this.name,
                     channel,
                     action,
+                    mode,
+                    strictReply,
                     errorCode: classified.code,
                     retryable: classified.retryable,
                 },
