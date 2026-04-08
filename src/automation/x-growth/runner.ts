@@ -93,7 +93,7 @@ export class XGrowthRunner {
     const statePath =
       process.env.X_GROWTH_STATE_PATH ??
       path.resolve("./artifacts/x-growth-state.json");
-
+    console.log("[x-growth] statePath =", statePath);
     this.stateStore = new XGrowthStateStore(statePath);
   }
 

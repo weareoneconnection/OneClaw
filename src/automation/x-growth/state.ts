@@ -106,10 +106,14 @@ export class XGrowthStateStore {
   }
 
   save(state: XGrowthState): void {
-    this.ensureDir();
-    const normalized = this.normalizeState(state);
-    fs.writeFileSync(this.filePath, JSON.stringify(normalized, null, 2), "utf8");
-  }
+  this.ensureDir();
+  const normalized = this.normalizeState(state);
+
+  console.log("[x-growth-state] saving to =", this.filePath);
+  console.log("[x-growth-state] payload =", JSON.stringify(normalized, null, 2));
+
+  fs.writeFileSync(this.filePath, JSON.stringify(normalized, null, 2), "utf8");
+}
 
   hashContent(content: string): string {
     return crypto
