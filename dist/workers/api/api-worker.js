@@ -51,7 +51,7 @@ export class ApiWorker {
             if (!url) {
                 return {
                     ok: false,
-                    error: "api.request requires input.url",
+                    error: `${context.action} requires input.url`,
                 };
             }
             const method = asString(input.method || "GET").toUpperCase();

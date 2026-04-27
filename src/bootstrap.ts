@@ -17,6 +17,8 @@ import { ApiWorker } from "./workers/api/api-worker.js";
 import { BrowserWorker } from "./workers/browser/browser-worker.js";
 import { FileWorker } from "./workers/files/file-worker.js";
 import { ContentWorker } from "./workers/content/content-worker.js";
+import { ConstructionWorker } from "./workers/construction/construction-worker.js";
+import { HumanWorker } from "./workers/human/human-worker.js";
 import { MessagingWorker } from "./workers/messaging/messaging-worker.js";
 import { SocialWorker } from "./workers/social/social-worker.js";
 import { Web3Worker } from "./workers/web3/web3-worker.js";
@@ -77,6 +79,8 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new ApiWorker(httpAdapter));
   workers.register(new FileWorker());
   workers.register(new ContentWorker());
+  workers.register(new ConstructionWorker());
+  workers.register(new HumanWorker());
   workers.register(new SocialWorker(xAdapter));
   workers.register(new Web3Worker());
   workers.register(new XReaderWorker(xAdapter));
@@ -128,6 +132,30 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Send a message",
     },
     {
+      action: "message.draft",
+      workerName: "human_worker",
+      risk: "low",
+      description: "Draft an internal message",
+    },
+    {
+      action: "message.notify",
+      workerName: "human_worker",
+      risk: "medium",
+      description: "Create an internal notification request",
+    },
+    {
+      action: "human.approval.request",
+      workerName: "human_worker",
+      risk: "high",
+      description: "Create a human approval request",
+    },
+    {
+      action: "human.confirmation.request",
+      workerName: "human_worker",
+      risk: "medium",
+      description: "Create a human confirmation request",
+    },
+    {
     action: "content.generate",
     workerName: "content_worker",
     risk: "low",
@@ -139,12 +167,24 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
     risk: "low",
     description: "Transform content",
     },
+    {
+      action: "result.compose",
+      workerName: "content_worker",
+      risk: "low",
+      description: "Compose a final result from previous outputs",
+    },
     // API
     {
       action: "api.request",
       workerName: "api_worker",
       risk: "medium",
       description: "Perform an HTTP request",
+    },
+    {
+      action: "api.webhook",
+      workerName: "api_worker",
+      risk: "medium",
+      description: "Send a webhook request",
     },
 
     // File
@@ -159,6 +199,12 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "file_worker",
       risk: "medium",
       description: "Write a file",
+    },
+    {
+      action: "file.append",
+      workerName: "file_worker",
+      risk: "medium",
+      description: "Append to a file",
     },
     {
       action: "file.exists",
@@ -275,6 +321,74 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "web3_worker",
       risk: "medium",
       description: "Legacy alias: read wallet data",
+    },
+
+    // Construction OS
+    {
+      action: "construction.task.create",
+      workerName: "construction_worker",
+      risk: "low",
+      description: "Create a Construction OS task",
+    },
+    {
+      action: "construction.approval.request",
+      workerName: "construction_worker",
+      risk: "high",
+      description: "Create a Construction OS approval request",
+    },
+    {
+      action: "construction.procurement.followup",
+      workerName: "construction_worker",
+      risk: "medium",
+      description: "Create a procurement follow-up action",
+    },
+    {
+      action: "construction.inspection.create",
+      workerName: "construction_worker",
+      risk: "medium",
+      description: "Create a QAQC inspection task",
+    },
+    {
+      action: "construction.hse.corrective_action",
+      workerName: "construction_worker",
+      risk: "high",
+      description: "Create an HSE corrective action",
+    },
+    {
+      action: "construction.qaqc.ncr.create",
+      workerName: "construction_worker",
+      risk: "high",
+      description: "Prepare or create a QAQC NCR",
+    },
+    {
+      action: "construction.rfi.create",
+      workerName: "construction_worker",
+      risk: "medium",
+      description: "Prepare or create an RFI",
+    },
+    {
+      action: "construction.change_order.prepare",
+      workerName: "construction_worker",
+      risk: "high",
+      description: "Prepare a change order package",
+    },
+    {
+      action: "construction.schedule.recovery_plan",
+      workerName: "construction_worker",
+      risk: "medium",
+      description: "Prepare a schedule recovery plan",
+    },
+    {
+      action: "construction.contract.claim_prepare",
+      workerName: "construction_worker",
+      risk: "high",
+      description: "Prepare a contract claim package",
+    },
+    {
+      action: "construction.budget.variance_review",
+      workerName: "construction_worker",
+      risk: "medium",
+      description: "Create a budget variance review action",
     },
   ] as const;
 

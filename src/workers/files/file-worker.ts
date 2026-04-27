@@ -96,6 +96,39 @@ export class FileWorker implements Worker {
         };
       }
 
+      if (context.action === "file.append") {
+        const filePath = asString(input.path);
+        if (!filePath) {
+          return {
+            ok: false,
+            error: "file.append requires input.path",
+          };
+        }
+
+        const content = String(input.content ?? "");
+        const ensureDir = asBoolean(input.ensureDir, true);
+
+        if (ensureDir) {
+          await fs.mkdir(path.dirname(filePath), { recursive: true });
+        }
+
+        await fs.appendFile(filePath, content, "utf8");
+        const bytes = Buffer.byteLength(content);
+
+        await context.log(`FileWorker appended path=${filePath} bytes=${bytes}`);
+
+        return {
+          ok: true,
+          output: {
+            action: context.action,
+            path: filePath,
+            bytes,
+            appended: true,
+          },
+          artifacts: [filePath],
+        };
+      }
+
       if (context.action === "file.exists") {
         const filePath = asString(input.path);
         if (!filePath) {

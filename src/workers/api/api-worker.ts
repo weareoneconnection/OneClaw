@@ -81,7 +81,7 @@ export class ApiWorker implements Worker {
       if (!url) {
         return {
           ok: false,
-          error: "api.request requires input.url",
+          error: `${context.action} requires input.url`,
         };
       }
 
