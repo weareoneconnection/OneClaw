@@ -28,17 +28,7 @@ Then open:
 - API: `http://localhost:4100`
 - Admin UI: `http://localhost:4100/admin`
 
-## Key routes
-
-- `GET /health`
-- `GET /v1/tasks?limit=50`
-- `GET /v1/tasks/:id`
-- `POST /v1/tasks/run`
-- `GET /v1/approvals/pending`
-- `GET /v1/approvals/:id`
-- `POST /v1/approvals/:id/approve`
-- `POST /v1/approvals/:id/reject`
-- `GET /admin`
+`
 
 ## X publishing payload
 
