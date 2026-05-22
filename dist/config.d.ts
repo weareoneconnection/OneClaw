@@ -27,5 +27,7 @@ export interface AppConfig {
     databaseUrl?: string;
     maxAutoPaymentAmount: number;
     maxAutoDatabaseWriteRows: number;
+    githubToken?: string;
+    githubDefaultOwner?: string;
 }
 export declare function loadConfig(): AppConfig;

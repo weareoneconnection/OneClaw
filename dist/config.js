@@ -28,6 +28,8 @@ export function loadConfig() {
         databaseUrl: process.env.ONECLAW_DATABASE_URL || process.env.DATABASE_URL,
         maxAutoPaymentAmount: Number(process.env.ONECLAW_MAX_AUTO_PAYMENT_AMOUNT ?? 0),
         maxAutoDatabaseWriteRows: Number(process.env.ONECLAW_MAX_AUTO_DB_WRITE_ROWS ?? 0),
+        githubToken: process.env.GITHUB_TOKEN,
+        githubDefaultOwner: process.env.GITHUB_DEFAULT_OWNER,
     };
 }
 function splitList(value) {

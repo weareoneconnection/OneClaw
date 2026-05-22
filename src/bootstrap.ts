@@ -3,6 +3,7 @@ import path from "node:path";
 import { Pool } from "pg";
 import { loadConfig } from "./config.js";
 import { HttpAdapter } from "./adapters/http/http-adapter.js";
+import { GitHubAdapter } from "./adapters/github/github-adapter.js";
 import { PlaywrightBrowserAdapter } from "./adapters/playwright/playwright-browser-adapter.js";
 import { TelegramAdapter } from "./adapters/telegram/telegram-adapter.js";
 import { XAdapter } from "./adapters/x/x-adapter.js";
@@ -297,6 +298,11 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
     timeoutMs: 15000,
     userAgent: "OneClaw/0.2",
   });
+  const githubAdapter = new GitHubAdapter({
+    token: config.githubToken,
+    defaultOwner: config.githubDefaultOwner,
+    http: httpAdapter,
+  });
 
   const browserAdapter = new PlaywrightBrowserAdapter({
     headless: config.playwrightHeadless,
@@ -337,7 +343,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new IdentityWorker());
   workers.register(new CrmWorker());
   workers.register(new CommerceWorker());
-  workers.register(new CodeWorker());
+  workers.register(new CodeWorker(githubAdapter));
   workers.register(new DeviceWorker());
   workers.register(new KnowledgeWorker());
   workers.register(new AudioWorker());
@@ -887,7 +893,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
     {
       action: "git.issue.create",
       workerName: "code_worker",
-      risk: "medium",
+      risk: "high",
       description: "Prepare a Git issue",
     },
     {

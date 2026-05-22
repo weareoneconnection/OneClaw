@@ -109,10 +109,10 @@ export function getConnectorReadiness(config) {
             key: "github",
             title: "GitHub / Git",
             domain: "code",
-            requiredEnv: ["GITHUB_TOKEN"],
+            requiredEnv: ["GITHUB_TOKEN", "GITHUB_DEFAULT_OWNER"],
             prepared: true,
             actions: ["git.issue.create", "git.pr.create", "git.ci.status", "git.repo.search"],
-            note: "Git worker is prepared; configure GitHub token for live repository actions.",
+            note: "GitHub live connector supports repo search, CI status, and approval-gated issue creation.",
         }),
         readiness({
             key: "stripe",
