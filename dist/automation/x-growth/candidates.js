@@ -1,6 +1,14 @@
 function asString(value) {
     return String(value ?? "").trim();
 }
+function isCreditsDepletedError(error) {
+    const text = error instanceof Error
+        ? error.message.toLowerCase()
+        : JSON.stringify(error ?? "").toLowerCase();
+    return (text.includes("creditsdepleted") ||
+        text.includes("does not have any credits") ||
+        text.includes(" 402 "));
+}
 function normalizeWhitespace(text) {
     return text.replace(/\s+/g, " ").trim();
 }
@@ -118,6 +126,9 @@ export async function fetchGrowthCandidates(x) {
         }
         catch (error) {
             console.error(`[x-growth] candidate query failed: ${query}`, error);
+            if (isCreditsDepletedError(error)) {
+                throw error;
+            }
             continue;
         }
         for (const tweet of result.tweets) {

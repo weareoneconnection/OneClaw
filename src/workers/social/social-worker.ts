@@ -42,6 +42,16 @@ function isValidTweetId(value: string): boolean {
   return /^[0-9]{1,19}$/.test(value);
 }
 
+function normalizeTweetId(value: Json | undefined): string | undefined {
+  const text = asOptionalString(value);
+  if (!text) return undefined;
+
+  if (isValidTweetId(text)) return text;
+
+  const match = text.match(/status\/([0-9]{1,19})/) || text.match(/\/([0-9]{10,19})(?:\?|$)/);
+  return match?.[1];
+}
+
 function truncateForLog(value: string, max = 120): string {
   if (value.length <= max) return value;
   return `${value.slice(0, max)}...`;
@@ -110,6 +120,14 @@ function classifyXError(message: string): {
 
   if (text.includes("429") || text.includes("rate limit")) {
     return { code: "X_RATE_LIMIT", retryable: true };
+  }
+
+  if (
+    text.includes("402") ||
+    text.includes("creditsdepleted") ||
+    text.includes("does not have any credits")
+  ) {
+    return { code: "X_CREDITS_DEPLETED", retryable: false };
   }
 
   if (
@@ -250,8 +268,20 @@ export class SocialWorker implements Worker {
     );
 
     const replyToTweetId =
+      normalizeTweetId(input.replyToTweetId) ||
+      normalizeTweetId(input.reply_to_tweet_id) ||
+      normalizeTweetId(input.tweetUrl) ||
+      normalizeTweetId(input.tweet_url) ||
+      normalizeTweetId(input.url);
+    const requestedReply = Boolean(
       asOptionalString(input.replyToTweetId) ||
-      asOptionalString(input.reply_to_tweet_id);
+        asOptionalString(input.reply_to_tweet_id) ||
+        asOptionalString(input.tweetUrl) ||
+        asOptionalString(input.tweet_url) ||
+        asOptionalString(input.url) ||
+        mode === "reply_only" ||
+        mode === "reply",
+    );
 
     try {
       if (action !== "social.post") {
@@ -317,10 +347,10 @@ export class SocialWorker implements Worker {
         };
       }
 
-      if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+      if ((strictReply || mode === "reply_only" || requestedReply) && !replyToTweetId) {
         return {
           ok: false,
-          error: "Reply-only task missing replyToTweetId",
+          error: "Reply task missing a valid replyToTweetId",
         };
       }
 

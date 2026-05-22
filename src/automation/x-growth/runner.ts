@@ -31,6 +31,12 @@ function asArray<T>(value: T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function envFlag(name: string, fallback = false): boolean {
+  const value = String(process.env[name] ?? "").trim().toLowerCase();
+  if (!value) return fallback;
+  return ["1", "true", "yes", "y", "on"].includes(value);
+}
+
 function normalizeTweetId(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -70,10 +76,48 @@ type TaskExecutionResult = {
 
 type TaskExecutionEnvelope = {
   ok?: boolean;
+  status?: string;
+  steps?: Array<{
+    status?: string;
+    error?: string;
+    output?: Record<string, unknown>;
+  }>;
+  logs?: string[];
   results?: TaskExecutionResult[];
   output?: Record<string, unknown>;
   error?: string;
 };
+
+function isCreditsDepletedError(value: unknown): boolean {
+  const text = JSON.stringify(value ?? "").toLowerCase();
+  return (
+    text.includes("creditsdepleted") ||
+    text.includes("does not have any credits") ||
+    text.includes("\"status\":\"402\"") ||
+    text.includes(" 402 ")
+  );
+}
+
+function isTaskExecutionSuccessful(result: TaskExecutionEnvelope | null | undefined): boolean {
+  if (!result) return false;
+  if (result.ok === false) return false;
+
+  const status = asString(result.status).toLowerCase();
+  if (["failed", "error", "rejected", "blocked"].includes(status)) return false;
+
+  if (Array.isArray(result.steps) && result.steps.length > 0) {
+    return result.steps.every((step) => {
+      const stepStatus = asString(step.status).toLowerCase();
+      return ["success", "completed", "complete"].includes(stepStatus);
+    });
+  }
+
+  if (Array.isArray(result.results) && result.results.length > 0) {
+    return result.results.every((item) => item.ok !== false);
+  }
+
+  return result.ok === true || ["success", "completed", "complete"].includes(status);
+}
 
 export class XGrowthRunner {
   private readonly xAdapter: XAdapter;
@@ -301,6 +345,11 @@ export class XGrowthRunner {
   }
 
   async runPublisher(): Promise<void> {
+    if (!envFlag("X_GROWTH_PUBLISH_ENABLED", false)) {
+      console.log("[x-growth] skip publisher: X_GROWTH_PUBLISH_ENABLED is not true");
+      return;
+    }
+
     const state = this.stateStore.load();
     const gate = canRunPublisher(state, defaultXGuardConfig);
 
@@ -375,9 +424,12 @@ console.log(
 const newState = this.stateStore.load();
 newState.lastPublisherRunAt = nowIso();
 
-if (!taskResult || taskResult.ok === false) {
+if (!isTaskExecutionSuccessful(taskResult)) {
   console.warn("[x-growth] publisher execution failed");
   this.stateStore.recordFailure(newState);
+  if (isCreditsDepletedError(taskResult)) {
+    console.warn("[x-growth] publisher paused because X API credits are depleted");
+  }
   this.stateStore.save(newState);
   return;
 }
@@ -425,9 +477,19 @@ if (!taskResult || taskResult.ok === false) {
 
     await sleep(randomJitterMs(5 * 60 * 1000));
 
-    const candidateTweets = asArray<GrowthCandidate>(
-      await fetchGrowthCandidates(this.xAdapter),
-    );
+    let candidateTweets: GrowthCandidate[] = [];
+    try {
+      candidateTweets = asArray<GrowthCandidate>(
+        await fetchGrowthCandidates(this.xAdapter),
+      );
+    } catch (error) {
+      console.error("[x-growth] candidate fetch failed:", error);
+      const newState = this.stateStore.load();
+      newState.lastEngageRunAt = nowIso();
+      this.stateStore.recordFailure(newState);
+      this.stateStore.save(newState);
+      return;
+    }
 
     const filteredCandidates = candidateTweets.filter((tweet) => {
       const tweetId = normalizeTweetId(tweet.tweetId);
@@ -556,9 +618,12 @@ console.log(
 const newState = this.stateStore.load();
 newState.lastEngageRunAt = nowIso();
 
-if (!taskResult || taskResult.ok === false) {
+if (!isTaskExecutionSuccessful(taskResult)) {
   console.warn("[x-growth] engage execution failed");
   this.stateStore.recordFailure(newState);
+  if (isCreditsDepletedError(taskResult)) {
+    console.warn("[x-growth] engage paused because X API credits are depleted");
+  }
   this.stateStore.save(newState);
   return;
 }

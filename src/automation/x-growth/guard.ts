@@ -9,11 +9,11 @@ export type XGuardConfig = {
 };
 
 export const defaultXGuardConfig: XGuardConfig = {
-  minPublisherCooldownMs: 15 * 60 * 1000,  // 15分钟
-  minEngageCooldownMs: 20 * 60 * 1000,
-  maxDailyPosts: 6,
-  maxDailyReplies: 15,
-  maxFailureStreak: 3,
+  minPublisherCooldownMs: 12 * 60 * 60 * 1000,
+  minEngageCooldownMs: 2 * 60 * 60 * 1000,
+  maxDailyPosts: 3,
+  maxDailyReplies: 6,
+  maxFailureStreak: 2,
 };
 
 function toMillis(value?: string): number {

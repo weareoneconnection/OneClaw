@@ -21,12 +21,44 @@ function asString(value) {
 function asArray(value) {
     return Array.isArray(value) ? value : [];
 }
+function envFlag(name, fallback = false) {
+    const value = String(process.env[name] ?? "").trim().toLowerCase();
+    if (!value)
+        return fallback;
+    return ["1", "true", "yes", "y", "on"].includes(value);
+}
 function normalizeTweetId(value) {
     return String(value ?? "").trim();
 }
 function isLikelyTweetId(value) {
     const id = normalizeTweetId(value);
     return /^[0-9]{5,30}$/.test(id);
+}
+function isCreditsDepletedError(value) {
+    const text = JSON.stringify(value ?? "").toLowerCase();
+    return (text.includes("creditsdepleted") ||
+        text.includes("does not have any credits") ||
+        text.includes("\"status\":\"402\"") ||
+        text.includes(" 402 "));
+}
+function isTaskExecutionSuccessful(result) {
+    if (!result)
+        return false;
+    if (result.ok === false)
+        return false;
+    const status = asString(result.status).toLowerCase();
+    if (["failed", "error", "rejected", "blocked"].includes(status))
+        return false;
+    if (Array.isArray(result.steps) && result.steps.length > 0) {
+        return result.steps.every((step) => {
+            const stepStatus = asString(step.status).toLowerCase();
+            return ["success", "completed", "complete"].includes(stepStatus);
+        });
+    }
+    if (Array.isArray(result.results) && result.results.length > 0) {
+        return result.results.every((item) => item.ok !== false);
+    }
+    return result.ok === true || ["success", "completed", "complete"].includes(status);
 }
 export class XGrowthRunner {
     xAdapter;
@@ -188,6 +220,10 @@ export class XGrowthRunner {
         return Array.from(blocked);
     }
     async runPublisher() {
+        if (!envFlag("X_GROWTH_PUBLISH_ENABLED", false)) {
+            console.log("[x-growth] skip publisher: X_GROWTH_PUBLISH_ENABLED is not true");
+            return;
+        }
         const state = this.stateStore.load();
         const gate = canRunPublisher(state, defaultXGuardConfig);
         if (!gate.ok) {
@@ -241,9 +277,12 @@ export class XGrowthRunner {
         console.log("[x-growth] publisher taskResult raw =", JSON.stringify(taskResult, null, 2));
         const newState = this.stateStore.load();
         newState.lastPublisherRunAt = nowIso();
-        if (!taskResult || taskResult.ok === false) {
+        if (!isTaskExecutionSuccessful(taskResult)) {
             console.warn("[x-growth] publisher execution failed");
             this.stateStore.recordFailure(newState);
+            if (isCreditsDepletedError(taskResult)) {
+                console.warn("[x-growth] publisher paused because X API credits are depleted");
+            }
             this.stateStore.save(newState);
             return;
         }
@@ -276,7 +315,18 @@ export class XGrowthRunner {
             return;
         }
         await sleep(randomJitterMs(5 * 60 * 1000));
-        const candidateTweets = asArray(await fetchGrowthCandidates(this.xAdapter));
+        let candidateTweets = [];
+        try {
+            candidateTweets = asArray(await fetchGrowthCandidates(this.xAdapter));
+        }
+        catch (error) {
+            console.error("[x-growth] candidate fetch failed:", error);
+            const newState = this.stateStore.load();
+            newState.lastEngageRunAt = nowIso();
+            this.stateStore.recordFailure(newState);
+            this.stateStore.save(newState);
+            return;
+        }
         const filteredCandidates = candidateTweets.filter((tweet) => {
             const tweetId = normalizeTweetId(tweet.tweetId);
             if (!tweetId)
@@ -363,9 +413,12 @@ export class XGrowthRunner {
         console.log("[x-growth] engage taskResult raw =", JSON.stringify(taskResult, null, 2));
         const newState = this.stateStore.load();
         newState.lastEngageRunAt = nowIso();
-        if (!taskResult || taskResult.ok === false) {
+        if (!isTaskExecutionSuccessful(taskResult)) {
             console.warn("[x-growth] engage execution failed");
             this.stateStore.recordFailure(newState);
+            if (isCreditsDepletedError(taskResult)) {
+                console.warn("[x-growth] engage paused because X API credits are depleted");
+            }
             this.stateStore.save(newState);
             return;
         }

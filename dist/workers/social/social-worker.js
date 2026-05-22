@@ -32,6 +32,15 @@ function asStringArray(value) {
 function isValidTweetId(value) {
     return /^[0-9]{1,19}$/.test(value);
 }
+function normalizeTweetId(value) {
+    const text = asOptionalString(value);
+    if (!text)
+        return undefined;
+    if (isValidTweetId(text))
+        return text;
+    const match = text.match(/status\/([0-9]{1,19})/) || text.match(/\/([0-9]{10,19})(?:\?|$)/);
+    return match?.[1];
+}
 function truncateForLog(value, max = 120) {
     if (value.length <= max)
         return value;
@@ -84,6 +93,11 @@ function classifyXError(message) {
     }
     if (text.includes("429") || text.includes("rate limit")) {
         return { code: "X_RATE_LIMIT", retryable: true };
+    }
+    if (text.includes("402") ||
+        text.includes("creditsdepleted") ||
+        text.includes("does not have any credits")) {
+        return { code: "X_CREDITS_DEPLETED", retryable: false };
     }
     if (text.includes("timeout") ||
         text.includes("network") ||
@@ -175,8 +189,18 @@ export class SocialWorker {
         const strictReply = asBoolean(input.strictReply, false);
         const mode = asString(input.mode).toLowerCase();
         await this.log(context, `SocialWorker executing action=${action || "unknown"} channel=${channel} mode=${mode || "default"} strictReply=${strictReply}`);
-        const replyToTweetId = asOptionalString(input.replyToTweetId) ||
-            asOptionalString(input.reply_to_tweet_id);
+        const replyToTweetId = normalizeTweetId(input.replyToTweetId) ||
+            normalizeTweetId(input.reply_to_tweet_id) ||
+            normalizeTweetId(input.tweetUrl) ||
+            normalizeTweetId(input.tweet_url) ||
+            normalizeTweetId(input.url);
+        const requestedReply = Boolean(asOptionalString(input.replyToTweetId) ||
+            asOptionalString(input.reply_to_tweet_id) ||
+            asOptionalString(input.tweetUrl) ||
+            asOptionalString(input.tweet_url) ||
+            asOptionalString(input.url) ||
+            mode === "reply_only" ||
+            mode === "reply");
         try {
             if (action !== "social.post") {
                 return {
@@ -226,10 +250,10 @@ export class SocialWorker {
                     error: "Invalid replyToTweetId: must be a numeric tweet ID (1-19 digits)",
                 };
             }
-            if ((strictReply || mode === "reply_only") && !replyToTweetId) {
+            if ((strictReply || mode === "reply_only" || requestedReply) && !replyToTweetId) {
                 return {
                     ok: false,
-                    error: "Reply-only task missing replyToTweetId",
+                    error: "Reply task missing a valid replyToTweetId",
                 };
             }
             const mediaPaths = asStringArray(input.mediaPaths) ||

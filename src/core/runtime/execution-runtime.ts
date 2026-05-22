@@ -482,6 +482,7 @@ export class ExecutionRuntime {
           error: result.error ?? "Unknown worker error",
           artifacts: result.artifacts,
           output: {
+            ...(this.asRecord(result.output) ?? {}),
             receipt: buildExecutionReceipt({
               taskId,
               stepId,
@@ -935,6 +936,7 @@ export class ExecutionRuntime {
   ): Promise<StepExecutionOutput> {
     let lastError = "Unknown worker error";
     let lastArtifacts: string[] | undefined;
+    let lastOutput: Json | Record<string, Json> | undefined;
 
     const maxAttempts = Math.max(1, retryPolicy.maxAttempts);
 
@@ -959,11 +961,17 @@ export class ExecutionRuntime {
 
       lastError = result.error ?? lastError;
       lastArtifacts = result.artifacts;
+      lastOutput = result.output;
 
       await this.taskStore.appendLog(
         taskId,
         `[${stepId}] attempt ${attempt} failed: ${lastError}`,
       );
+
+      const retryable = this.asRecord(result.output)?.retryable;
+      if (retryable === false) {
+        break;
+      }
 
       if (attempt < maxAttempts) {
         await this.delay(retryPolicy.backoffMs * attempt);
@@ -974,6 +982,7 @@ export class ExecutionRuntime {
       ok: false,
       error: lastError,
       artifacts: lastArtifacts,
+      output: lastOutput,
     };
   }
 
