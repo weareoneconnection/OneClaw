@@ -1,6 +1,12 @@
 function asString(value) {
     return String(value ?? "").trim();
 }
+function githubError(action, response) {
+    const body = typeof response.body === "string"
+        ? response.body
+        : JSON.stringify(response.body);
+    return `${action} GitHub API returned ${response.status}: ${body}`;
+}
 export class CodeWorker {
     github;
     name = "code_worker";
@@ -19,6 +25,7 @@ export class CodeWorker {
                 const response = await this.github.createIssue({ repo, title, body: asString(input.body) });
                 return {
                     ok: response.ok,
+                    error: response.ok ? undefined : githubError(context.action, response),
                     output: {
                         provider,
                         action: context.action,
@@ -44,6 +51,7 @@ export class CodeWorker {
                 const response = await this.github.getCiStatus({ repo, ref: asString(input.ref) || undefined });
                 return {
                     ok: response.ok,
+                    error: response.ok ? undefined : githubError(context.action, response),
                     output: {
                         provider,
                         action: context.action,
@@ -64,6 +72,7 @@ export class CodeWorker {
                 const response = await this.github.searchRepos(query);
                 return {
                     ok: response.ok,
+                    error: response.ok ? undefined : githubError(context.action, response),
                     output: {
                         provider,
                         action: context.action,
