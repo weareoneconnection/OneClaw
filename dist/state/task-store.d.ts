@@ -11,6 +11,7 @@ export interface TaskStore {
     createApproval(params: Omit<ApprovalRecord, "id" | "createdAt" | "updatedAt" | "status">): Promise<ApprovalRecord>;
     getApproval(approvalId: string): Promise<ApprovalRecord | undefined>;
     getPendingApproval(taskId: string, stepId: string): Promise<ApprovalRecord | undefined>;
+    getLatestApprovalForStep(taskId: string, stepId: string): Promise<ApprovalRecord | undefined>;
     listPendingApprovals(): Promise<ApprovalRecord[]>;
     decideApproval(params: {
         approvalId: string;
@@ -38,6 +39,7 @@ export declare class InMemoryTaskStore implements TaskStore {
     createApproval(params: Omit<ApprovalRecord, "id" | "createdAt" | "updatedAt" | "status">): Promise<ApprovalRecord>;
     getApproval(approvalId: string): Promise<ApprovalRecord | undefined>;
     getPendingApproval(taskId: string, stepId: string): Promise<ApprovalRecord | undefined>;
+    getLatestApprovalForStep(taskId: string, stepId: string): Promise<ApprovalRecord | undefined>;
     listPendingApprovals(): Promise<ApprovalRecord[]>;
     decideApproval(params: {
         approvalId: string;

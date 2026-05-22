@@ -69,6 +69,10 @@ export class PostgresTaskStore {
         const result = await this.pool.query(`select approval_json from oneclaw_approvals where task_id = $1 and step_id = $2 and status = 'pending' order by created_at desc limit 1`, [taskId, stepId]);
         return result.rows[0]?.approval_json;
     }
+    async getLatestApprovalForStep(taskId, stepId) {
+        const result = await this.pool.query(`select approval_json from oneclaw_approvals where task_id = $1 and step_id = $2 order by updated_at desc limit 1`, [taskId, stepId]);
+        return result.rows[0]?.approval_json;
+    }
     async listPendingApprovals() {
         const result = await this.pool.query(`select approval_json from oneclaw_approvals where status = 'pending' order by created_at desc`);
         return result.rows.map((row) => row.approval_json);

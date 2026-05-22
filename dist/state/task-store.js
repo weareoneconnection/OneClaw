@@ -156,6 +156,12 @@ export class InMemoryTaskStore {
             item.status === "pending");
         return found ? this.cloneApprovalRecord(found) : undefined;
     }
+    async getLatestApprovalForStep(taskId, stepId) {
+        const found = [...this.approvals.values()]
+            .filter((item) => item.taskId === taskId && item.stepId === stepId)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+        return found ? this.cloneApprovalRecord(found) : undefined;
+    }
     async listPendingApprovals() {
         return [...this.approvals.values()]
             .filter((item) => item.status === "pending")

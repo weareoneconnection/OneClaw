@@ -863,7 +863,7 @@ export class ExecutionRuntime {
     existingStartedAt: string | undefined,
     reason: string,
   ): Promise<ApprovalStatus> {
-    const pending = await this.taskStore.getPendingApproval(taskId, stepId);
+    const pending = await this.taskStore.getLatestApprovalForStep(taskId, stepId);
 
     if (!pending) {
       await this.taskStore.createApproval({

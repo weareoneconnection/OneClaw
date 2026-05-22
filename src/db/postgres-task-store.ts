@@ -92,6 +92,14 @@ export class PostgresTaskStore implements TaskStore {
     return result.rows[0]?.approval_json as ApprovalRecord | undefined;
   }
 
+  async getLatestApprovalForStep(taskId: string, stepId: string): Promise<ApprovalRecord | undefined> {
+    const result = await this.pool.query(
+      `select approval_json from oneclaw_approvals where task_id = $1 and step_id = $2 order by updated_at desc limit 1`,
+      [taskId, stepId],
+    );
+    return result.rows[0]?.approval_json as ApprovalRecord | undefined;
+  }
+
   async listPendingApprovals(): Promise<ApprovalRecord[]> {
     const result = await this.pool.query(`select approval_json from oneclaw_approvals where status = 'pending' order by created_at desc`);
     return result.rows.map((row) => row.approval_json as ApprovalRecord);

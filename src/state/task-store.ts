@@ -36,6 +36,11 @@ export interface TaskStore {
     stepId: string,
   ): Promise<ApprovalRecord | undefined>;
 
+  getLatestApprovalForStep(
+    taskId: string,
+    stepId: string,
+  ): Promise<ApprovalRecord | undefined>;
+
   listPendingApprovals(): Promise<ApprovalRecord[]>;
 
   decideApproval(params: {
@@ -249,6 +254,17 @@ export class InMemoryTaskStore implements TaskStore {
         item.stepId === stepId &&
         item.status === "pending",
     );
+
+    return found ? this.cloneApprovalRecord(found) : undefined;
+  }
+
+  async getLatestApprovalForStep(
+    taskId: string,
+    stepId: string,
+  ): Promise<ApprovalRecord | undefined> {
+    const found = [...this.approvals.values()]
+      .filter((item) => item.taskId === taskId && item.stepId === stepId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
 
     return found ? this.cloneApprovalRecord(found) : undefined;
   }

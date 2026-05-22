@@ -546,7 +546,7 @@ export class ExecutionRuntime {
         return value;
     }
     async handleApprovalRequirement(taskId, stepId, action, input, existingStartedAt, reason) {
-        const pending = await this.taskStore.getPendingApproval(taskId, stepId);
+        const pending = await this.taskStore.getLatestApprovalForStep(taskId, stepId);
         if (!pending) {
             await this.taskStore.createApproval({
                 taskId,
