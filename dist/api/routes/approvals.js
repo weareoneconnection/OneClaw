@@ -28,10 +28,23 @@ export function registerApprovalRoutes(app, services) {
                 decisionNote: parsed.data.decisionNote,
             });
             const task = await services.taskStore.get(approval.taskId);
-            const normalized = services.normalizedTaskStore.get(approval.taskId);
+            const normalized = services.normalizedTaskStore.get(approval.taskId)
+                ?? task?.metadata?.normalizedTask;
             if (!task || !normalized) {
                 return res.status(404).json({ error: "Task or normalized workflow not found" });
             }
+            await services.taskStore.update(approval.taskId, (current) => ({
+                ...current,
+                status: "queued",
+                steps: current.steps.map((step) => (step.stepId === approval.stepId
+                    ? {
+                        stepId: step.stepId,
+                        action: step.action,
+                        status: "pending",
+                    }
+                    : step)),
+            }));
+            services.normalizedTaskStore.set(approval.taskId, normalized);
             await services.queue.enqueue({ taskId: approval.taskId, task: normalized });
             return res.json({
                 approval,
