@@ -140,7 +140,7 @@ export function getConnectorReadiness(config: AppConfig): ConnectorReadiness[] {
       domain: "code",
       requiredEnv: ["GITHUB_TOKEN", "GITHUB_DEFAULT_OWNER"],
       prepared: true,
-      actions: ["git.repo.get", "git.checks.list", "git.issue.create", "git.pr.create", "git.ci.status", "git.repo.search"],
+      actions: ["git.repo.get", "git.actions.runs", "git.checks.list", "git.issue.create", "git.pr.create", "git.ci.status", "git.repo.search"],
       note: "GitHub live connector supports repo search, CI status, and approval-gated issue creation.",
     }),
     readiness({

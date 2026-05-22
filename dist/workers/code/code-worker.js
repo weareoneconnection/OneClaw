@@ -103,6 +103,26 @@ export class CodeWorker {
             }
             return { ok: true, output: { provider, action: context.action, status: "checks_list_prepared", repo, ref: asString(input.ref) } };
         }
+        if (context.action === "git.actions.runs") {
+            if (!repo)
+                return { ok: false, error: "git.actions.runs requires input.repo" };
+            if (provider === "github" && this.github?.isConfigured()) {
+                const response = await this.github.listActionRuns({ repo, branch: asString(input.branch || input.ref) || undefined });
+                return {
+                    ok: response.ok,
+                    error: response.ok ? undefined : githubError(context.action, response),
+                    output: {
+                        provider,
+                        action: context.action,
+                        status: response.ok ? "actions_runs_read" : "actions_runs_failed",
+                        repo,
+                        branch: asString(input.branch || input.ref),
+                        response: response.body,
+                    },
+                };
+            }
+            return { ok: true, output: { provider, action: context.action, status: "actions_runs_prepared", repo, branch: asString(input.branch || input.ref) } };
+        }
         if (context.action === "git.repo.search") {
             const query = asString(input.query);
             if (!query)

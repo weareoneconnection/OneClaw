@@ -124,6 +124,7 @@ function requiredInputForAction(action: string): string[] {
   if (action === "git.ci.status") return ["repo"];
   if (action === "git.repo.get") return ["repo"];
   if (action === "git.checks.list") return ["repo"];
+  if (action === "git.actions.runs") return ["repo"];
   if (action === "git.repo.search") return ["query"];
   if (action === "device.status.read") return ["deviceId"];
   if (action === "device.command.prepare") return ["deviceId", "command"];
@@ -915,6 +916,12 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "code_worker",
       risk: "low",
       description: "Read GitHub check runs for a ref",
+    },
+    {
+      action: "git.actions.runs",
+      workerName: "code_worker",
+      risk: "low",
+      description: "Read GitHub Actions workflow runs",
     },
     {
       action: "git.ci.status",

@@ -69,4 +69,15 @@ export class GitHubAdapter {
             query: { per_page: 20 },
         });
     }
+    async listActionRuns(input) {
+        const target = splitRepo(input.repo, this.params.defaultOwner);
+        return this.params.http.request(`https://api.github.com/repos/${target.owner}/${target.repo}/actions/runs`, {
+            method: "GET",
+            headers: this.headers(),
+            query: {
+                per_page: 20,
+                ...(input.branch ? { branch: input.branch } : {}),
+            },
+        });
+    }
 }

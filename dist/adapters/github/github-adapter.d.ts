@@ -23,4 +23,8 @@ export declare class GitHubAdapter {
         repo: string;
         ref?: string;
     }): Promise<import("../http/http-adapter.js").HttpResponseData>;
+    listActionRuns(input: {
+        repo: string;
+        branch?: string;
+    }): Promise<import("../http/http-adapter.js").HttpResponseData>;
 }
