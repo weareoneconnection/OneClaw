@@ -59,6 +59,9 @@ type GrowthCandidate = {
   tweetId: string;
   authorId?: string;
   username?: string;
+  authorName?: string;
+  authorVerified?: boolean;
+  authorFollowersCount?: number;
   text?: string;
   createdAt?: string;
   conversationId?: string;
@@ -519,6 +522,9 @@ if (!isTaskExecutionSuccessful(taskResult)) {
           tweetId: tweet.tweetId,
           authorId: tweet.authorId ?? "",
           username: tweet.username ?? "",
+          authorName: tweet.authorName ?? "",
+          authorVerified: tweet.authorVerified ?? false,
+          authorFollowersCount: tweet.authorFollowersCount ?? 0,
           createdAt: tweet.createdAt ?? "",
           conversationId: tweet.conversationId ?? "",
           text: asString(tweet.text).slice(0, 180),

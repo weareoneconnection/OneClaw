@@ -4,6 +4,9 @@ export type CandidateTweet = {
     createdAt?: string;
     authorId?: string;
     username?: string;
+    authorName?: string;
+    authorVerified?: boolean;
+    authorFollowersCount?: number;
     conversationId?: string;
     referencedTweets?: Array<{
         type?: string;

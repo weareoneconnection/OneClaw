@@ -23,11 +23,16 @@ function isReplyTweet(tweet) {
 function hasRestrictedShape(tweet, selfUsername, selfUserId) {
     const text = normalizeWhitespace(asString(tweet.text));
     const lowered = text.toLowerCase();
+    const username = asString(tweet.authorUsername).toLowerCase();
+    const name = asString(tweet.authorName).toLowerCase();
+    const followers = Number(tweet.authorFollowersCount ?? 0);
     if (!tweet.id || !text)
         return true;
-    if (text.length < 35)
+    if (text.length < 45)
         return true;
     if (asString(tweet.authorId) === selfUserId)
+        return true;
+    if (selfUsername && username === selfUsername.toLowerCase())
         return true;
     if (selfUsername && lowered.includes(`@${selfUsername.toLowerCase()}`))
         return true;
@@ -39,6 +44,20 @@ function hasRestrictedShape(tweet, selfUsername, selfUserId) {
         return true;
     if (lowered.startsWith("rt @"))
         return true;
+    if (tweet.authorVerified)
+        return true;
+    if (followers > 50000)
+        return true;
+    if (username.includes("news") ||
+        username.includes("official") ||
+        username.includes("hq") ||
+        username.includes("labs") ||
+        name.includes("official") ||
+        name.includes("news") ||
+        name.includes("protocol") ||
+        name.includes("foundation")) {
+        return true;
+    }
     if (lowered.includes("giveaway") ||
         lowered.includes("follow me") ||
         lowered.includes("dm me") ||
@@ -57,19 +76,20 @@ function hasStrongOpenReplySignal(tweet) {
     const lowered = text.toLowerCase();
     if (lowered.includes("what do you think") ||
         lowered.includes("how do you think") ||
+        lowered.includes("what are your thoughts") ||
         lowered.includes("share your") ||
+        lowered.includes("share your take") ||
+        lowered.includes("curious what") ||
+        lowered.includes("looking for feedback") ||
+        lowered.includes("would love feedback") ||
         lowered.includes("drop below") ||
         lowered.includes("reply below") ||
         lowered.includes("comment below") ||
-        lowered.includes("builders") ||
-        lowered.includes("thread") ||
         lowered.includes("thoughts?") ||
         lowered.includes("agree?") ||
         lowered.includes("disagree?")) {
         return true;
     }
-    if (text.includes("?"))
-        return true;
     return false;
 }
 function looksLikeLockedAnnouncement(tweet) {
@@ -97,6 +117,10 @@ function toCandidate(tweet) {
         text: normalizeWhitespace(asString(tweet.text)),
         createdAt: asString(tweet.createdAt) || undefined,
         authorId: asString(tweet.authorId) || undefined,
+        username: asString(tweet.authorUsername) || undefined,
+        authorName: asString(tweet.authorName) || undefined,
+        authorVerified: tweet.authorVerified,
+        authorFollowersCount: tweet.authorFollowersCount,
         conversationId: asString(tweet.conversationId) || undefined,
         referencedTweets: tweet.referencedTweets?.length
             ? tweet.referencedTweets.map((item) => ({
@@ -108,11 +132,11 @@ function toCandidate(tweet) {
 }
 export async function fetchGrowthCandidates(x) {
     const queries = [
-        '"AI agents" workflow OR "what do you think"',
-        '"AI automation" builders OR "share your"',
-        '"agent infrastructure" thread',
-        '"execution layer" AI question',
-        '"automation" founders thread',
+        '("AI agents" OR "AI automation") ("what do you think" OR thoughts)',
+        '("agent workflow" OR "AI workflow") ("share your take" OR "looking for feedback")',
+        '("AI agents" OR "automation") ("reply below" OR "comment below")',
+        '("agent infrastructure" OR "execution layer") ("curious what" OR thoughts)',
+        '("AI builders" OR founders) ("what are your thoughts" OR "would love feedback")',
     ];
     const selfUserId = asString(process.env.X_SELF_USER_ID);
     const selfUsername = asString(process.env.X_SELF_USERNAME).replace(/^@/, "");

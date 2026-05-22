@@ -343,6 +343,12 @@ export class XAdapter {
             id: asTrimmed(raw?.id),
             text: asTrimmed(raw?.text),
             authorId: asTrimmed(raw?.author_id) || undefined,
+            authorUsername: asTrimmed(raw?.authorUsername) || undefined,
+            authorName: asTrimmed(raw?.authorName) || undefined,
+            authorVerified: typeof raw?.authorVerified === "boolean" ? raw.authorVerified : undefined,
+            authorFollowersCount: typeof raw?.authorFollowersCount === "number"
+                ? raw.authorFollowersCount
+                : undefined,
             createdAt: asTrimmed(raw?.created_at) || undefined,
             conversationId: asTrimmed(raw?.conversation_id) || undefined,
             referencedTweets: Array.isArray(raw?.referenced_tweets)
@@ -460,13 +466,32 @@ export class XAdapter {
             max_results: maxResults,
             next_token: asTrimmed(options?.paginationToken) || undefined,
             "tweet.fields": "author_id,created_at,conversation_id,referenced_tweets",
+            "user.fields": "username,name,verified,public_metrics",
+            expansions: "author_id",
         });
         const url = `https://api.twitter.com/2/tweets/search/recent${queryString}`;
         const response = await this.bearerFetch(url);
         const payload = await this.parseJsonOrThrow(response, "X searchRecentTweets");
+        const usersById = new Map();
+        if (Array.isArray(payload.includes?.users)) {
+            for (const user of payload.includes.users) {
+                const id = asTrimmed(user?.id);
+                if (id)
+                    usersById.set(id, user);
+            }
+        }
         return {
             tweets: Array.isArray(payload.data)
-                ? payload.data.map((item) => this.mapTweet(item))
+                ? payload.data.map((item) => {
+                    const author = usersById.get(asTrimmed(item?.author_id));
+                    return this.mapTweet({
+                        ...item,
+                        authorUsername: author?.username,
+                        authorName: author?.name,
+                        authorVerified: author?.verified,
+                        authorFollowersCount: author?.public_metrics?.followers_count,
+                    });
+                })
                 : [],
             nextToken: asTrimmed(payload.meta?.next_token) || undefined,
         };

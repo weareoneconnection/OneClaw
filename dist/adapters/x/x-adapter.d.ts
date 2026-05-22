@@ -19,6 +19,10 @@ export type XTweet = {
     id: string;
     text: string;
     authorId?: string;
+    authorUsername?: string;
+    authorName?: string;
+    authorVerified?: boolean;
+    authorFollowersCount?: number;
     createdAt?: string;
     conversationId?: string;
     referencedTweets?: XTweetReference[];
@@ -27,6 +31,13 @@ export type XUser = {
     id: string;
     username: string;
     name?: string;
+    verified?: boolean;
+    publicMetrics?: {
+        followersCount?: number;
+        followingCount?: number;
+        tweetCount?: number;
+        listedCount?: number;
+    };
 };
 export type XSearchResponse = {
     tweets: XTweet[];
