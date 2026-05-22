@@ -25,5 +25,7 @@ export interface AppConfig {
     shellAllowlist: string[];
     searchEndpoint?: string;
     databaseUrl?: string;
+    maxAutoPaymentAmount: number;
+    maxAutoDatabaseWriteRows: number;
 }
 export declare function loadConfig(): AppConfig;

@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { redactJson, redactText } from "../security/redact.js";
 import type {
   ApprovalRecord,
   TaskRunRecord,
@@ -178,7 +179,7 @@ export class InMemoryTaskStore implements TaskStore {
 
       const updated: TaskRunRecord = {
         ...this.cloneTaskRecord(current),
-        logs: [...current.logs, `${new Date().toISOString()} ${message}`],
+        logs: [...current.logs, `${new Date().toISOString()} ${redactText(message)}`],
         updatedAt: new Date().toISOString(),
       };
 
@@ -384,6 +385,6 @@ export class InMemoryTaskStore implements TaskStore {
       return value;
     }
 
-    return JSON.parse(JSON.stringify(value)) as T;
+    return redactJson(JSON.parse(JSON.stringify(value)) as T);
   }
 }

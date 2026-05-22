@@ -1,5 +1,5 @@
 import type { CapabilityRegistration } from "../../types/capability.js";
-import type { ApprovalMode } from "../../types/task.js";
+import type { ApprovalMode, Json } from "../../types/task.js";
 export interface PolicyDecision {
     allowed: boolean;
     requiresApproval?: boolean;
@@ -7,4 +7,14 @@ export interface PolicyDecision {
 }
 export declare class PolicyEngine {
     isAllowed(capability: CapabilityRegistration, approvalMode: ApprovalMode): PolicyDecision;
+    evaluateAction(input: {
+        capability: CapabilityRegistration;
+        approvalMode: ApprovalMode;
+        actionInput: Record<string, Json>;
+        environment?: string;
+        limits?: {
+            maxAutoPaymentAmount?: number;
+            maxAutoDatabaseWriteRows?: number;
+        };
+    }): PolicyDecision;
 }

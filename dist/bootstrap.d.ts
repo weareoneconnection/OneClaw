@@ -9,6 +9,7 @@ import { PostgresTaskStore } from "./db/postgres-task-store.js";
 import { SessionManager } from "./state/session-manager.js";
 import { PreflightEngine } from "./core/preflight/preflight-engine.js";
 import { SchedulerService } from "./core/scheduler/scheduler-service.js";
+import { IdempotencyStore } from "./core/idempotency/idempotency-store.js";
 import type { NormalizedTaskDefinition } from "./types/task.js";
 import type { CapabilityRegistration } from "./types/capability.js";
 export declare function bootstrap(options?: {
@@ -25,6 +26,7 @@ export declare function bootstrap(options?: {
     queue: import("./types/queue.js").TaskQueue;
     preflight: PreflightEngine;
     scheduler: SchedulerService;
+    idempotencyStore: IdempotencyStore;
     plugins: {
         key: string;
         title?: string;

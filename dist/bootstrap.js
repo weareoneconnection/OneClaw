@@ -50,6 +50,7 @@ import { SessionManager } from "./state/session-manager.js";
 import { createTaskQueue } from "./queue/index.js";
 import { PreflightEngine } from "./core/preflight/preflight-engine.js";
 import { SchedulerService } from "./core/scheduler/scheduler-service.js";
+import { IdempotencyStore } from "./core/idempotency/idempotency-store.js";
 import { loadPluginCapabilities } from "./plugins/plugin-loader.js";
 function enrichCapability(registration) {
     const domain = registration.action.split(".")[0] || "custom";
@@ -399,6 +400,7 @@ export async function bootstrap(options) {
     const workers = new WorkerRegistry();
     const sessionManager = new SessionManager();
     const normalizedTaskStore = new Map();
+    const idempotencyStore = new IdempotencyStore();
     const shouldUsePostgres = config.taskStoreMode === "postgres" && Boolean(config.postgresUrl);
     const pool = shouldUsePostgres
         ? new Pool({ connectionString: config.postgresUrl })
@@ -1207,7 +1209,7 @@ export async function bootstrap(options) {
         capabilities,
     });
     const preflight = new PreflightEngine(capabilities, config);
-    const runtime = new ExecutionRuntime(capabilities, workers, policy, taskStore, sessionManager, preflight);
+    const runtime = new ExecutionRuntime(capabilities, workers, policy, taskStore, sessionManager, preflight, config);
     const queue = await createTaskQueue({
         config,
         planner,
@@ -1235,6 +1237,7 @@ export async function bootstrap(options) {
         queue,
         preflight,
         scheduler,
+        idempotencyStore,
         plugins,
         normalizedTaskStore,
         pool,

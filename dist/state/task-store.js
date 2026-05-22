@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { redactJson, redactText } from "../security/redact.js";
 class KeyedSerialQueue {
     tails = new Map();
     async run(key, fn) {
@@ -101,7 +102,7 @@ export class InMemoryTaskStore {
             }
             const updated = {
                 ...this.cloneTaskRecord(current),
-                logs: [...current.logs, `${new Date().toISOString()} ${message}`],
+                logs: [...current.logs, `${new Date().toISOString()} ${redactText(message)}`],
                 updatedAt: new Date().toISOString(),
             };
             this.tasks.set(taskId, this.cloneTaskRecord(updated));
@@ -257,6 +258,6 @@ export class InMemoryTaskStore {
         if (typeof value !== "object") {
             return value;
         }
-        return JSON.parse(JSON.stringify(value));
+        return redactJson(JSON.parse(JSON.stringify(value)));
     }
 }

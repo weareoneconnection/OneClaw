@@ -6,4 +6,7 @@ export class WorkerRegistry {
     get(name) {
         return this.items.get(name);
     }
+    list() {
+        return [...this.items.values()];
+    }
 }

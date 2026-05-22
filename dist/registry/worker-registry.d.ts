@@ -3,4 +3,5 @@ export declare class WorkerRegistry {
     private readonly items;
     register(worker: Worker): void;
     get(name: string): Worker | undefined;
+    list(): Worker[];
 }

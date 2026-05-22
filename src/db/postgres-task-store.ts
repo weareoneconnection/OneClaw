@@ -2,13 +2,14 @@ import { nanoid } from "nanoid";
 import { Pool } from "pg";
 import type { ApprovalRecord, TaskRunRecord, TaskStepResult, TaskStoreStats } from "../types/task.js";
 import type { TaskStore } from "../state/task-store.js";
+import { redactJson, redactText } from "../security/redact.js";
 
 export class PostgresTaskStore implements TaskStore {
   constructor(private readonly pool: Pool) {}
 
   async create(params: Omit<TaskRunRecord, "id" | "createdAt" | "updatedAt">): Promise<TaskRunRecord> {
     const now = new Date().toISOString();
-    const record: TaskRunRecord = { id: nanoid(), createdAt: now, updatedAt: now, ...params };
+    const record: TaskRunRecord = redactJson({ id: nanoid(), createdAt: now, updatedAt: now, ...params });
     await this.pool.query(
       `insert into oneclaw_tasks (id, task_name, status, approval_mode, task_json, created_at, updated_at)
        values ($1, $2, $3, $4, $5::jsonb, now(), now())`,
@@ -44,7 +45,7 @@ export class PostgresTaskStore implements TaskStore {
               task_json = $5::jsonb,
               updated_at = now()
         where id = $1`,
-      [taskId, updated.status, updated.approvalMode, updated.taskName, JSON.stringify(updated)],
+      [taskId, updated.status, updated.approvalMode, updated.taskName, JSON.stringify(redactJson(updated))],
     );
     return updated;
   }
@@ -52,7 +53,7 @@ export class PostgresTaskStore implements TaskStore {
   async appendLog(taskId: string, message: string): Promise<void> {
     await this.update(taskId, (current) => ({
       ...current,
-      logs: [...current.logs, `${new Date().toISOString()} ${message}`],
+      logs: [...current.logs, `${new Date().toISOString()} ${redactText(message)}`],
     }));
   }
 
@@ -68,7 +69,7 @@ export class PostgresTaskStore implements TaskStore {
 
   async createApproval(params: Omit<ApprovalRecord, "id" | "createdAt" | "updatedAt" | "status">): Promise<ApprovalRecord> {
     const now = new Date().toISOString();
-    const approval: ApprovalRecord = { id: nanoid(), createdAt: now, updatedAt: now, status: "pending", ...params };
+    const approval: ApprovalRecord = redactJson({ id: nanoid(), createdAt: now, updatedAt: now, status: "pending", ...params });
     await this.pool.query(
       `insert into oneclaw_approvals (
          id, task_id, step_id, action, status, reason, input_json, approval_json, created_at, updated_at
@@ -121,7 +122,7 @@ export class PostgresTaskStore implements TaskStore {
               decided_by = $4,
               decision_note = $5
         where id = $1`,
-      [params.approvalId, updated.status, JSON.stringify(updated), updated.decidedBy ?? null, updated.decisionNote ?? null],
+      [params.approvalId, updated.status, JSON.stringify(redactJson(updated)), updated.decidedBy ?? null, updated.decisionNote ?? null],
     );
     return updated;
   }

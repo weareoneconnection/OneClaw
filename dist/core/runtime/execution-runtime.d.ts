@@ -1,4 +1,5 @@
 import type { PreflightEngine } from "../preflight/preflight-engine.js";
+import type { AppConfig } from "../../config.js";
 import type { CapabilityRegistry } from "../../registry/capability-registry.js";
 import type { WorkerRegistry } from "../../registry/worker-registry.js";
 import type { PolicyEngine } from "../policy/policy-engine.js";
@@ -12,9 +13,10 @@ export declare class ExecutionRuntime {
     private readonly taskStore;
     private readonly sessionManager;
     private readonly preflight?;
+    private readonly config?;
     private readonly options;
     private readonly placeholderTexts;
-    constructor(capabilities: CapabilityRegistry, workers: WorkerRegistry, policy: PolicyEngine, taskStore: TaskStore, sessionManager: SessionManager, preflight?: PreflightEngine | undefined);
+    constructor(capabilities: CapabilityRegistry, workers: WorkerRegistry, policy: PolicyEngine, taskStore: TaskStore, sessionManager: SessionManager, preflight?: PreflightEngine | undefined, config?: AppConfig | undefined);
     runTask(taskId: string, task: NormalizedTaskDefinition): Promise<TaskRunRecord>;
     private processStep;
     private resolveInputForStep;

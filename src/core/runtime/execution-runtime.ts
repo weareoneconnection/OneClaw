@@ -2,6 +2,7 @@ import { buildStepResult } from "../result/result-builder.js";
 import { buildExecutionReceipt } from "../proof/receipt.js";
 import { TaskGraph } from "../task-graph/task-graph.js";
 import type { PreflightEngine } from "../preflight/preflight-engine.js";
+import type { AppConfig } from "../../config.js";
 import type { CapabilityRegistry } from "../../registry/capability-registry.js";
 import type { WorkerRegistry } from "../../registry/worker-registry.js";
 import type { PolicyEngine } from "../policy/policy-engine.js";
@@ -105,6 +106,7 @@ export class ExecutionRuntime {
     private readonly taskStore: TaskStore,
     private readonly sessionManager: SessionManager,
     private readonly preflight?: PreflightEngine,
+    private readonly config?: AppConfig,
   ) {}
 
   async runTask(
@@ -395,14 +397,29 @@ export class ExecutionRuntime {
       return { stepId, decision: "failed" };
     }
 
-    if (policyDecision.requiresApproval) {
+    const inputPolicyDecision = this.policy.evaluateAction({
+      capability,
+      approvalMode: task.approvalMode,
+      actionInput: resolvedInputRecord,
+      limits: {
+        maxAutoPaymentAmount: this.config?.maxAutoPaymentAmount,
+        maxAutoDatabaseWriteRows: this.config?.maxAutoDatabaseWriteRows,
+      },
+    });
+
+    if (!inputPolicyDecision.allowed) {
+      await this.failStep(taskId, stepId, action, inputPolicyDecision.reason ?? "Blocked by input policy");
+      return { stepId, decision: "failed" };
+    }
+
+    if (policyDecision.requiresApproval || inputPolicyDecision.requiresApproval) {
       const approvalStatus = await this.handleApprovalRequirement(
         taskId,
         stepId,
         action,
         resolvedInputRecord,
         existing?.startedAt,
-        policyDecision.reason ?? `Approval required for ${action}`,
+        inputPolicyDecision.reason ?? policyDecision.reason ?? `Approval required for ${action}`,
       );
 
       if (approvalStatus === "awaiting_approval") {

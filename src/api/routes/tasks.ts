@@ -5,6 +5,13 @@ import {
   taskDefinitionSchema,
   taskListSchema,
 } from "../schemas.js";
+import { redactJson } from "../../security/redact.js";
+
+function idempotencyKey(req: Request, body: { metadata?: Record<string, unknown> }) {
+  const header = req.header("idempotency-key") || req.header("x-idempotency-key");
+  const metadataKey = body.metadata?.idempotencyKey;
+  return String(header || metadataKey || "").trim();
+}
 
 export function registerTaskRoutes(app: Express, services: AppServices): void {
   app.get("/health", async (_req: Request, res: Response) => {
@@ -24,7 +31,7 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
 
   app.post("/v1/tasks/run", async (req: Request, res: Response) => {
     console.log("[route] /v1/tasks/run entered");
-    console.log("[route] /v1/tasks/run body =", req.body);
+    console.log("[route] /v1/tasks/run body =", redactJson(req.body));
 
     const parsed = taskDefinitionSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -49,12 +56,28 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
         return res.status(422).json({ ok: false, error: "Preflight blocked task.", preflight });
       }
 
+      const idemKey = idempotencyKey(req, parsed.data);
+      if (idemKey) {
+        const existing = services.idempotencyStore.get(idemKey);
+        if (existing) {
+          return res.status(200).json({
+            ok: true,
+            idempotent: true,
+            task: await services.taskStore.get(existing.taskId),
+          });
+        }
+      }
+
       console.log("[/v1/tasks/run] before taskStore.create");
       const record = await services.taskStore.create({
         taskName: normalized.taskName,
         status: "queued",
         approvalMode: normalized.approvalMode,
-        metadata: normalized.metadata,
+        metadata: {
+          ...(normalized.metadata ?? {}),
+          ...(idemKey ? { idempotencyKey: idemKey } : {}),
+          normalizedTask: normalized as any,
+        },
         steps: [],
         logs: [],
       });
@@ -63,6 +86,7 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
       });
 
       services.normalizedTaskStore.set(record.id, normalized);
+      if (idemKey) services.idempotencyStore.set(idemKey, record.id);
       console.log("[/v1/tasks/run] after normalizedTaskStore.set", {
         taskId: record.id,
       });
@@ -95,7 +119,7 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
 
   app.post("/v1/actions/execute", async (req: Request, res: Response) => {
     console.log("[route] /v1/actions/execute entered");
-    console.log("[route] /v1/actions/execute body =", req.body);
+    console.log("[route] /v1/actions/execute body =", redactJson(req.body));
 
     const parsed = actionExecutionSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -130,12 +154,28 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
         return res.status(422).json({ ok: false, error: "Preflight blocked action.", preflight });
       }
 
+      const idemKey = String(req.header("idempotency-key") || req.header("x-idempotency-key") || parsed.data.input?.idempotencyKey || "").trim();
+      if (idemKey) {
+        const existing = services.idempotencyStore.get(idemKey);
+        if (existing) {
+          return res.status(200).json({
+            ok: true,
+            idempotent: true,
+            task: await services.taskStore.get(existing.taskId),
+          });
+        }
+      }
+
       console.log("[/v1/actions/execute] before taskStore.create");
       const record = await services.taskStore.create({
         taskName: normalized.taskName,
         status: "queued",
         approvalMode: normalized.approvalMode,
-        metadata: normalized.metadata,
+        metadata: {
+          ...(normalized.metadata ?? {}),
+          ...(idemKey ? { idempotencyKey: idemKey } : {}),
+          normalizedTask: normalized as any,
+        },
         steps: [],
         logs: [],
       });
@@ -144,6 +184,7 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
       });
 
       services.normalizedTaskStore.set(record.id, normalized);
+      if (idemKey) services.idempotencyStore.set(idemKey, record.id);
       console.log("[/v1/actions/execute] after normalizedTaskStore.set", {
         taskId: record.id,
       });

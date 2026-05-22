@@ -10,4 +10,8 @@ export class WorkerRegistry {
   get(name: string): Worker | undefined {
     return this.items.get(name);
   }
+
+  list(): Worker[] {
+    return [...this.items.values()];
+  }
 }

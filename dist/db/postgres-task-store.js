@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { redactJson, redactText } from "../security/redact.js";
 export class PostgresTaskStore {
     pool;
     constructor(pool) {
@@ -6,7 +7,7 @@ export class PostgresTaskStore {
     }
     async create(params) {
         const now = new Date().toISOString();
-        const record = { id: nanoid(), createdAt: now, updatedAt: now, ...params };
+        const record = redactJson({ id: nanoid(), createdAt: now, updatedAt: now, ...params });
         await this.pool.query(`insert into oneclaw_tasks (id, task_name, status, approval_mode, task_json, created_at, updated_at)
        values ($1, $2, $3, $4, $5::jsonb, now(), now())`, [record.id, record.taskName, record.status, record.approvalMode, JSON.stringify(record)]);
         return record;
@@ -32,13 +33,13 @@ export class PostgresTaskStore {
               task_name = $4,
               task_json = $5::jsonb,
               updated_at = now()
-        where id = $1`, [taskId, updated.status, updated.approvalMode, updated.taskName, JSON.stringify(updated)]);
+        where id = $1`, [taskId, updated.status, updated.approvalMode, updated.taskName, JSON.stringify(redactJson(updated))]);
         return updated;
     }
     async appendLog(taskId, message) {
         await this.update(taskId, (current) => ({
             ...current,
-            logs: [...current.logs, `${new Date().toISOString()} ${message}`],
+            logs: [...current.logs, `${new Date().toISOString()} ${redactText(message)}`],
         }));
     }
     async upsertStep(taskId, step) {
@@ -54,7 +55,7 @@ export class PostgresTaskStore {
     }
     async createApproval(params) {
         const now = new Date().toISOString();
-        const approval = { id: nanoid(), createdAt: now, updatedAt: now, status: "pending", ...params };
+        const approval = redactJson({ id: nanoid(), createdAt: now, updatedAt: now, status: "pending", ...params });
         await this.pool.query(`insert into oneclaw_approvals (
          id, task_id, step_id, action, status, reason, input_json, approval_json, created_at, updated_at
        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, now(), now())`, [approval.id, approval.taskId, approval.stepId, approval.action, approval.status, approval.reason, JSON.stringify(approval.input), JSON.stringify(approval)]);
@@ -91,7 +92,7 @@ export class PostgresTaskStore {
               decided_at = now(),
               decided_by = $4,
               decision_note = $5
-        where id = $1`, [params.approvalId, updated.status, JSON.stringify(updated), updated.decidedBy ?? null, updated.decisionNote ?? null]);
+        where id = $1`, [params.approvalId, updated.status, JSON.stringify(redactJson(updated)), updated.decidedBy ?? null, updated.decisionNote ?? null]);
         return updated;
     }
     async getStats() {

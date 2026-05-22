@@ -8,6 +8,7 @@ export class ExecutionRuntime {
     taskStore;
     sessionManager;
     preflight;
+    config;
     options = {
         defaultTimeoutMs: 60_000,
         defaultRetry: {
@@ -31,13 +32,14 @@ export class ExecutionRuntime {
         "summary",
         "final result",
     ].map((item) => item.toLowerCase()));
-    constructor(capabilities, workers, policy, taskStore, sessionManager, preflight) {
+    constructor(capabilities, workers, policy, taskStore, sessionManager, preflight, config) {
         this.capabilities = capabilities;
         this.workers = workers;
         this.policy = policy;
         this.taskStore = taskStore;
         this.sessionManager = sessionManager;
         this.preflight = preflight;
+        this.config = config;
     }
     async runTask(taskId, task) {
         await this.taskStore.update(taskId, (current) => ({
@@ -230,8 +232,21 @@ export class ExecutionRuntime {
             await this.failStep(taskId, stepId, action, `Preflight blocked action. ${detail}`);
             return { stepId, decision: "failed" };
         }
-        if (policyDecision.requiresApproval) {
-            const approvalStatus = await this.handleApprovalRequirement(taskId, stepId, action, resolvedInputRecord, existing?.startedAt, policyDecision.reason ?? `Approval required for ${action}`);
+        const inputPolicyDecision = this.policy.evaluateAction({
+            capability,
+            approvalMode: task.approvalMode,
+            actionInput: resolvedInputRecord,
+            limits: {
+                maxAutoPaymentAmount: this.config?.maxAutoPaymentAmount,
+                maxAutoDatabaseWriteRows: this.config?.maxAutoDatabaseWriteRows,
+            },
+        });
+        if (!inputPolicyDecision.allowed) {
+            await this.failStep(taskId, stepId, action, inputPolicyDecision.reason ?? "Blocked by input policy");
+            return { stepId, decision: "failed" };
+        }
+        if (policyDecision.requiresApproval || inputPolicyDecision.requiresApproval) {
+            const approvalStatus = await this.handleApprovalRequirement(taskId, stepId, action, resolvedInputRecord, existing?.startedAt, inputPolicyDecision.reason ?? policyDecision.reason ?? `Approval required for ${action}`);
             if (approvalStatus === "awaiting_approval") {
                 return { stepId, decision: "awaiting_approval" };
             }
