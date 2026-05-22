@@ -1,4 +1,5 @@
 import { buildStepResult } from "../result/result-builder.js";
+import { buildExecutionReceipt } from "../proof/receipt.js";
 import { TaskGraph } from "../task-graph/task-graph.js";
 export class ExecutionRuntime {
     capabilities;
@@ -6,6 +7,7 @@ export class ExecutionRuntime {
     policy;
     taskStore;
     sessionManager;
+    preflight;
     options = {
         defaultTimeoutMs: 60_000,
         defaultRetry: {
@@ -29,12 +31,13 @@ export class ExecutionRuntime {
         "summary",
         "final result",
     ].map((item) => item.toLowerCase()));
-    constructor(capabilities, workers, policy, taskStore, sessionManager) {
+    constructor(capabilities, workers, policy, taskStore, sessionManager, preflight) {
         this.capabilities = capabilities;
         this.workers = workers;
         this.policy = policy;
         this.taskStore = taskStore;
         this.sessionManager = sessionManager;
+        this.preflight = preflight;
     }
     async runTask(taskId, task) {
         await this.taskStore.update(taskId, (current) => ({
@@ -218,6 +221,15 @@ export class ExecutionRuntime {
             return { stepId, decision: "failed" };
         }
         const resolvedInputRecord = await this.resolveInputForStep(taskId, action, rawInput);
+        const preflightReport = this.preflight?.evaluateStep(action, resolvedInputRecord, stepId);
+        if (preflightReport && !preflightReport.ok) {
+            const detail = preflightReport.checks
+                .filter((item) => item.status === "fail")
+                .map((item) => `${item.label}: ${item.detail}`)
+                .join("; ");
+            await this.failStep(taskId, stepId, action, `Preflight blocked action. ${detail}`);
+            return { stepId, decision: "failed" };
+        }
         if (policyDecision.requiresApproval) {
             const approvalStatus = await this.handleApprovalRequirement(taskId, stepId, action, resolvedInputRecord, existing?.startedAt, policyDecision.reason ?? `Approval required for ${action}`);
             if (approvalStatus === "awaiting_approval") {
@@ -251,6 +263,16 @@ export class ExecutionRuntime {
                 finishedAt: new Date().toISOString(),
                 error: result.error ?? "Unknown worker error",
                 artifacts: result.artifacts,
+                output: {
+                    receipt: buildExecutionReceipt({
+                        taskId,
+                        stepId,
+                        action,
+                        status: "failed",
+                        startedAt,
+                        result,
+                    }),
+                },
             }));
             return { stepId, decision: "failed" };
         }
@@ -260,7 +282,17 @@ export class ExecutionRuntime {
             status: "success",
             startedAt,
             finishedAt: new Date().toISOString(),
-            output: result.output,
+            output: {
+                ...(this.asRecord(result.output) ?? {}),
+                receipt: buildExecutionReceipt({
+                    taskId,
+                    stepId,
+                    action,
+                    status: "success",
+                    startedAt,
+                    result,
+                }),
+            },
             artifacts: result.artifacts,
         }));
         return { stepId, decision: "completed" };

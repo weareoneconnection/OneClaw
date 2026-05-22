@@ -1,0 +1,189 @@
+import path from "node:path";
+import type { AppConfig } from "../../config.js";
+import type { CapabilityRegistry } from "../../registry/capability-registry.js";
+import type { CapabilityRegistration } from "../../types/capability.js";
+import type { Json, NormalizedTaskDefinition, NormalizedTaskStep, TaskDefinition } from "../../types/task.js";
+
+export interface PreflightCheck {
+  id: string;
+  status: "pass" | "warn" | "fail";
+  label: string;
+  detail: string;
+}
+
+export interface PreflightReport {
+  ok: boolean;
+  status: "ready" | "needs_approval" | "blocked";
+  taskName: string;
+  actions: string[];
+  checks: PreflightCheck[];
+  approvalActions: string[];
+  deniedActions: string[];
+  unsupportedActions: string[];
+}
+
+function check(id: string, status: PreflightCheck["status"], label: string, detail: string): PreflightCheck {
+  return { id, status, label, detail };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function hostMatchesAllowlist(urlValue: string, allowlist: string[]): boolean {
+  if (allowlist.length === 0) return true;
+  try {
+    const url = new URL(urlValue);
+    return allowlist.some((allowed) => url.hostname === allowed || url.hostname.endsWith(`.${allowed}`));
+  } catch {
+    return false;
+  }
+}
+
+function pathMatchesAllowlist(filePath: string, allowlist: string[]): boolean {
+  if (allowlist.length === 0) return true;
+  const resolved = path.resolve(filePath);
+  return allowlist.some((allowed) => {
+    const root = path.resolve(allowed);
+    return resolved === root || resolved.startsWith(`${root}${path.sep}`);
+  });
+}
+
+function hasRequiredInput(step: NormalizedTaskStep | TaskDefinition["steps"][number], capability: CapabilityRegistration) {
+  const input = asRecord(step.input);
+  return (capability.inputSchema?.required ?? []).every((field) => {
+    const value = input[field];
+    return value !== undefined && value !== null && value !== "";
+  });
+}
+
+export class PreflightEngine {
+  constructor(
+    private readonly capabilities: CapabilityRegistry,
+    private readonly config: AppConfig,
+  ) {}
+
+  evaluate(task: NormalizedTaskDefinition | TaskDefinition): PreflightReport {
+    const checks: PreflightCheck[] = [];
+    const approvalActions = new Set<string>();
+    const deniedActions = new Set<string>();
+    const unsupportedActions = new Set<string>();
+    const actions = task.steps.map((step) => step.action);
+
+    for (const step of task.steps) {
+      const capability = this.capabilities.get(step.action);
+      if (!capability) {
+        unsupportedActions.add(step.action);
+        checks.push(check(`capability:${step.id}`, "fail", step.action, "Action is not registered."));
+        continue;
+      }
+
+      checks.push(check(
+        `capability:${step.id}`,
+        capability.maturity === "stub" ? "fail" : capability.maturity === "planned" ? "warn" : "pass",
+        step.action,
+        `${capability.description} · ${capability.maturity ?? "guarded"}`,
+      ));
+
+      if (capability.maturity === "stub") deniedActions.add(step.action);
+      if (capability.approvalRequired || capability.risk === "high" || capability.risk === "critical" || task.approvalMode === "manual") {
+        approvalActions.add(step.action);
+      }
+
+      if (!hasRequiredInput(step, capability)) {
+        deniedActions.add(step.action);
+        checks.push(check(
+          `input:${step.id}`,
+          "fail",
+          `${step.action} input`,
+          `Missing required input: ${(capability.inputSchema?.required ?? []).join(", ")}`,
+        ));
+      }
+
+      checks.push(...this.evaluateSandbox(step.action, asRecord(step.input) as Record<string, Json>, step.id));
+    }
+
+    const hasFailures = checks.some((item) => item.status === "fail");
+    const needsApproval = approvalActions.size > 0;
+
+    return {
+      ok: !hasFailures,
+      status: hasFailures ? "blocked" : needsApproval ? "needs_approval" : "ready",
+      taskName: task.taskName,
+      actions,
+      checks,
+      approvalActions: [...approvalActions],
+      deniedActions: [...deniedActions],
+      unsupportedActions: [...unsupportedActions],
+    };
+  }
+
+  evaluateStep(action: string, input: Record<string, Json>, stepId = "step"): PreflightReport {
+    return this.evaluate({
+      taskName: `step:${action}`,
+      approvalMode: "auto",
+      steps: [{ id: stepId, action, input, dependsOn: [] }],
+    });
+  }
+
+  private evaluateSandbox(action: string, input: Record<string, Json>, stepId: string): PreflightCheck[] {
+    if (action.startsWith("file.")) {
+      const filePath = typeof input.path === "string" ? input.path : "";
+      if (!filePath) return [];
+      return [
+        check(
+          `sandbox:file:${stepId}`,
+          pathMatchesAllowlist(filePath, this.config.fileAllowlist) ? "pass" : "fail",
+          "File sandbox",
+          this.config.fileAllowlist.length
+            ? `Path must stay inside: ${this.config.fileAllowlist.join(", ")}`
+            : "No file allowlist configured; development mode allows all paths.",
+        ),
+      ];
+    }
+
+    if (action.startsWith("api.")) {
+      const url = typeof input.url === "string" ? input.url : "";
+      if (!url) return [];
+      return [
+        check(
+          `sandbox:api:${stepId}`,
+          hostMatchesAllowlist(url, this.config.apiAllowlist) ? "pass" : "fail",
+          "API sandbox",
+          this.config.apiAllowlist.length
+            ? `Host must match: ${this.config.apiAllowlist.join(", ")}`
+            : "No API allowlist configured; development mode allows all hosts.",
+        ),
+      ];
+    }
+
+    if (action.startsWith("browser.")) {
+      const url = typeof input.url === "string" ? input.url : "";
+      if (!url) return [];
+      return [
+        check(
+          `sandbox:browser:${stepId}`,
+          hostMatchesAllowlist(url, this.config.browserAllowlist) ? "pass" : "fail",
+          "Browser sandbox",
+          this.config.browserAllowlist.length
+            ? `Host must match: ${this.config.browserAllowlist.join(", ")}`
+            : "No browser allowlist configured; development mode allows all hosts.",
+        ),
+      ];
+    }
+
+    if (action.startsWith("shell.")) {
+      return [
+        check(
+          `sandbox:shell:${stepId}`,
+          this.config.shellEnabled ? "warn" : "fail",
+          "Shell sandbox",
+          this.config.shellEnabled ? "Shell is enabled and must remain approval gated." : "Shell execution is disabled by default.",
+        ),
+      ];
+    }
+
+    return [];
+  }
+}

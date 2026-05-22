@@ -1,0 +1,42 @@
+import type { ExecutionContext, Worker, WorkerExecutionResult } from "../../types/capability.js";
+import type { Json } from "../../types/task.js";
+
+function asString(value: Json | undefined): string {
+  return String(value ?? "").trim();
+}
+
+export class CodeWorker implements Worker {
+  readonly name = "code_worker";
+
+  async execute(input: Record<string, Json>, context: ExecutionContext): Promise<WorkerExecutionResult> {
+    await context.log(`CodeWorker executing ${context.action}`);
+    const provider = asString(input.provider || "github");
+    const repo = asString(input.repo);
+
+    if (context.action === "git.issue.create") {
+      const title = asString(input.title);
+      if (!repo || !title) return { ok: false, error: "git.issue.create requires input.repo and input.title" };
+      return { ok: true, output: { provider, action: context.action, status: "issue_prepared", repo, title, body: asString(input.body) } };
+    }
+
+    if (context.action === "git.pr.create") {
+      const title = asString(input.title);
+      const branch = asString(input.branch);
+      if (!repo || !title || !branch) return { ok: false, error: "git.pr.create requires input.repo, input.title, and input.branch" };
+      return { ok: true, output: { provider, action: context.action, status: "pull_request_prepared", repo, title, branch, base: asString(input.base || "main") } };
+    }
+
+    if (context.action === "git.ci.status") {
+      if (!repo) return { ok: false, error: "git.ci.status requires input.repo" };
+      return { ok: true, output: { provider, action: context.action, status: "ci_status_prepared", repo, ref: asString(input.ref) } };
+    }
+
+    if (context.action === "git.repo.search") {
+      const query = asString(input.query);
+      if (!query) return { ok: false, error: "git.repo.search requires input.query" };
+      return { ok: true, output: { provider, action: context.action, status: "repo_search_prepared", query, results: [] } };
+    }
+
+    return { ok: false, error: `Unsupported code action: ${context.action}` };
+  }
+}

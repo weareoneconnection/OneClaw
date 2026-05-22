@@ -16,5 +16,14 @@ export interface AppConfig {
     xAccessSecret?: string;
     adminToken?: string;
     xDryRun: boolean;
+    fileAllowlist: string[];
+    apiAllowlist: string[];
+    browserAllowlist: string[];
+    pluginDir: string;
+    schedulerEnabled: boolean;
+    shellEnabled: boolean;
+    shellAllowlist: string[];
+    searchEndpoint?: string;
+    databaseUrl?: string;
 }
 export declare function loadConfig(): AppConfig;

@@ -1,0 +1,25 @@
+{
+  "key": "example_plugin",
+  "title": "Example OneClaw Plugin",
+  "capabilities": [
+    {
+      "action": "example.echo",
+      "workerName": "human_worker",
+      "risk": "low",
+      "description": "Example plugin capability manifest entry",
+      "domain": "example",
+      "maturity": "planned",
+      "approvalRequired": false,
+      "supportsDryRun": true,
+      "supportsRollback": false,
+      "inputSchema": {
+        "required": ["text"],
+        "properties": {
+          "text": "string"
+        }
+      },
+      "outputContract": ["status", "text"],
+      "permissions": ["plugin"]
+    }
+  ]
+}

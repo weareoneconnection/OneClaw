@@ -7,7 +7,10 @@ import { WorkerRegistry } from "./registry/worker-registry.js";
 import { InMemoryTaskStore } from "./state/task-store.js";
 import { PostgresTaskStore } from "./db/postgres-task-store.js";
 import { SessionManager } from "./state/session-manager.js";
+import { PreflightEngine } from "./core/preflight/preflight-engine.js";
+import { SchedulerService } from "./core/scheduler/scheduler-service.js";
 import type { NormalizedTaskDefinition } from "./types/task.js";
+import type { CapabilityRegistration } from "./types/capability.js";
 export declare function bootstrap(options?: {
     workerOnly?: boolean;
 }): Promise<{
@@ -20,6 +23,13 @@ export declare function bootstrap(options?: {
     workers: WorkerRegistry;
     runtime: ExecutionRuntime;
     queue: import("./types/queue.js").TaskQueue;
+    preflight: PreflightEngine;
+    scheduler: SchedulerService;
+    plugins: {
+        key: string;
+        title?: string;
+        capabilities?: CapabilityRegistration[];
+    }[];
     normalizedTaskStore: Map<string, NormalizedTaskDefinition>;
     pool: Pool | undefined;
 }>;

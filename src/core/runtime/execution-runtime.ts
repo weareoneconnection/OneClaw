@@ -1,5 +1,7 @@
 import { buildStepResult } from "../result/result-builder.js";
+import { buildExecutionReceipt } from "../proof/receipt.js";
 import { TaskGraph } from "../task-graph/task-graph.js";
+import type { PreflightEngine } from "../preflight/preflight-engine.js";
 import type { CapabilityRegistry } from "../../registry/capability-registry.js";
 import type { WorkerRegistry } from "../../registry/worker-registry.js";
 import type { PolicyEngine } from "../policy/policy-engine.js";
@@ -102,6 +104,7 @@ export class ExecutionRuntime {
     private readonly policy: PolicyEngine,
     private readonly taskStore: TaskStore,
     private readonly sessionManager: SessionManager,
+    private readonly preflight?: PreflightEngine,
   ) {}
 
   async runTask(
@@ -382,6 +385,16 @@ export class ExecutionRuntime {
       rawInput,
     );
 
+    const preflightReport = this.preflight?.evaluateStep(action, resolvedInputRecord, stepId);
+    if (preflightReport && !preflightReport.ok) {
+      const detail = preflightReport.checks
+        .filter((item) => item.status === "fail")
+        .map((item) => `${item.label}: ${item.detail}`)
+        .join("; ");
+      await this.failStep(taskId, stepId, action, `Preflight blocked action. ${detail}`);
+      return { stepId, decision: "failed" };
+    }
+
     if (policyDecision.requiresApproval) {
       const approvalStatus = await this.handleApprovalRequirement(
         taskId,
@@ -451,6 +464,16 @@ export class ExecutionRuntime {
           finishedAt: new Date().toISOString(),
           error: result.error ?? "Unknown worker error",
           artifacts: result.artifacts,
+          output: {
+            receipt: buildExecutionReceipt({
+              taskId,
+              stepId,
+              action,
+              status: "failed",
+              startedAt,
+              result,
+            }),
+          },
         }),
       );
 
@@ -465,7 +488,17 @@ export class ExecutionRuntime {
         status: "success",
         startedAt,
         finishedAt: new Date().toISOString(),
-        output: result.output,
+        output: {
+          ...(this.asRecord(result.output) ?? {}),
+          receipt: buildExecutionReceipt({
+            taskId,
+            stepId,
+            action,
+            status: "success",
+            startedAt,
+            result,
+          }),
+        },
         artifacts: result.artifacts,
       }),
     );

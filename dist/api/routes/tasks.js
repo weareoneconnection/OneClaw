@@ -31,6 +31,10 @@ export function registerTaskRoutes(app, services) {
                 approvalMode: normalized.approvalMode,
                 stepsCount: normalized.steps?.length ?? 0,
             });
+            const preflight = services.preflight.evaluate(normalized);
+            if (!preflight.ok) {
+                return res.status(422).json({ ok: false, error: "Preflight blocked task.", preflight });
+            }
             console.log("[/v1/tasks/run] before taskStore.create");
             const record = await services.taskStore.create({
                 taskName: normalized.taskName,
@@ -97,6 +101,10 @@ export function registerTaskRoutes(app, services) {
                 approvalMode: normalized.approvalMode,
                 stepsCount: normalized.steps?.length ?? 0,
             });
+            const preflight = services.preflight.evaluate(normalized);
+            if (!preflight.ok) {
+                return res.status(422).json({ ok: false, error: "Preflight blocked action.", preflight });
+            }
             console.log("[/v1/actions/execute] before taskStore.create");
             const record = await services.taskStore.create({
                 taskName: normalized.taskName,

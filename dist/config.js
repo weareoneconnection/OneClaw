@@ -17,5 +17,20 @@ export function loadConfig() {
         xAccessSecret: process.env.X_ACCESS_SECRET,
         adminToken: process.env.ONECLAW_ADMIN_TOKEN,
         xDryRun: process.env.ONECLAW_X_DRY_RUN === 'true',
+        fileAllowlist: splitList(process.env.ONECLAW_FILE_ALLOWLIST),
+        apiAllowlist: splitList(process.env.ONECLAW_API_ALLOWLIST),
+        browserAllowlist: splitList(process.env.ONECLAW_BROWSER_ALLOWLIST),
+        pluginDir: process.env.ONECLAW_PLUGIN_DIR ?? "./plugins",
+        schedulerEnabled: process.env.ONECLAW_SCHEDULER_ENABLED !== "false",
+        shellEnabled: process.env.ONECLAW_SHELL_ENABLED === "true",
+        shellAllowlist: splitList(process.env.ONECLAW_SHELL_ALLOWLIST),
+        searchEndpoint: process.env.ONECLAW_SEARCH_ENDPOINT,
+        databaseUrl: process.env.ONECLAW_DATABASE_URL || process.env.DATABASE_URL,
     };
+}
+function splitList(value) {
+    return String(value ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
 }
