@@ -45,12 +45,28 @@ export class GitHubAdapter {
             },
         });
     }
+    async getRepo(repo) {
+        const target = splitRepo(repo, this.params.defaultOwner);
+        return this.params.http.request(`https://api.github.com/repos/${target.owner}/${target.repo}`, {
+            method: "GET",
+            headers: this.headers(),
+        });
+    }
     async getCiStatus(input) {
         const target = splitRepo(input.repo, this.params.defaultOwner);
         const ref = input.ref || "main";
         return this.params.http.request(`https://api.github.com/repos/${target.owner}/${target.repo}/commits/${encodeURIComponent(ref)}/status`, {
             method: "GET",
             headers: this.headers(),
+        });
+    }
+    async listChecks(input) {
+        const target = splitRepo(input.repo, this.params.defaultOwner);
+        const ref = input.ref || "main";
+        return this.params.http.request(`https://api.github.com/repos/${target.owner}/${target.repo}/commits/${encodeURIComponent(ref)}/check-runs`, {
+            method: "GET",
+            headers: this.headers(),
+            query: { per_page: 20 },
         });
     }
 }

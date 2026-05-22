@@ -151,6 +151,10 @@ function requiredInputForAction(action) {
         return ["repo", "title", "branch"];
     if (action === "git.ci.status")
         return ["repo"];
+    if (action === "git.repo.get")
+        return ["repo"];
+    if (action === "git.checks.list")
+        return ["repo"];
     if (action === "git.repo.search")
         return ["query"];
     if (action === "device.status.read")
@@ -991,6 +995,18 @@ export async function bootstrap(options) {
             workerName: "code_worker",
             risk: "high",
             description: "Prepare a pull request",
+        },
+        {
+            action: "git.repo.get",
+            workerName: "code_worker",
+            risk: "low",
+            description: "Read Git repository metadata",
+        },
+        {
+            action: "git.checks.list",
+            workerName: "code_worker",
+            risk: "low",
+            description: "Read GitHub check runs for a ref",
         },
         {
             action: "git.ci.status",

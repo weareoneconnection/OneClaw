@@ -14,7 +14,12 @@ export declare class GitHubAdapter {
         title: string;
         body?: string;
     }): Promise<import("../http/http-adapter.js").HttpResponseData>;
+    getRepo(repo: string): Promise<import("../http/http-adapter.js").HttpResponseData>;
     getCiStatus(input: {
+        repo: string;
+        ref?: string;
+    }): Promise<import("../http/http-adapter.js").HttpResponseData>;
+    listChecks(input: {
         repo: string;
         ref?: string;
     }): Promise<import("../http/http-adapter.js").HttpResponseData>;

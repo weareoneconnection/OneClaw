@@ -70,6 +70,45 @@ export class CodeWorker implements Worker {
       return { ok: true, output: { provider, action: context.action, status: "ci_status_prepared", repo, ref: asString(input.ref) } };
     }
 
+    if (context.action === "git.repo.get") {
+      if (!repo) return { ok: false, error: "git.repo.get requires input.repo" };
+      if (provider === "github" && this.github?.isConfigured()) {
+        const response = await this.github.getRepo(repo);
+        return {
+          ok: response.ok,
+          error: response.ok ? undefined : githubError(context.action, response),
+          output: {
+            provider,
+            action: context.action,
+            status: response.ok ? "repo_read" : "repo_read_failed",
+            repo,
+            response: response.body,
+          },
+        };
+      }
+      return { ok: true, output: { provider, action: context.action, status: "repo_get_prepared", repo } };
+    }
+
+    if (context.action === "git.checks.list") {
+      if (!repo) return { ok: false, error: "git.checks.list requires input.repo" };
+      if (provider === "github" && this.github?.isConfigured()) {
+        const response = await this.github.listChecks({ repo, ref: asString(input.ref) || undefined });
+        return {
+          ok: response.ok,
+          error: response.ok ? undefined : githubError(context.action, response),
+          output: {
+            provider,
+            action: context.action,
+            status: response.ok ? "checks_read" : "checks_read_failed",
+            repo,
+            ref: asString(input.ref || "main"),
+            response: response.body,
+          },
+        };
+      }
+      return { ok: true, output: { provider, action: context.action, status: "checks_list_prepared", repo, ref: asString(input.ref) } };
+    }
+
     if (context.action === "git.repo.search") {
       const query = asString(input.query);
       if (!query) return { ok: false, error: "git.repo.search requires input.query" };
