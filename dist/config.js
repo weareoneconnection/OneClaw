@@ -30,6 +30,8 @@ export function loadConfig() {
         maxAutoDatabaseWriteRows: Number(process.env.ONECLAW_MAX_AUTO_DB_WRITE_ROWS ?? 0),
         githubToken: process.env.GITHUB_TOKEN,
         githubDefaultOwner: process.env.GITHUB_DEFAULT_OWNER,
+        desktopEnabled: process.env.ONECLAW_DESKTOP_ENABLED === "true",
+        desktopAppAllowlist: splitList(process.env.ONECLAW_DESKTOP_APP_ALLOWLIST),
     };
 }
 function splitList(value) {

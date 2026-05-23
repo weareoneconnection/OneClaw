@@ -79,7 +79,9 @@ function enrichCapability(registration) {
 }
 function requiredInputForAction(action) {
     if (action.startsWith("browser.") && action !== "browser.screenshot") {
-        if (action === "browser.click" || action === "browser.type")
+        if (action === "browser.type")
+            return ["selector", "text"];
+        if (action === "browser.click")
             return ["selector"];
         return ["url"];
     }
@@ -193,6 +195,16 @@ function requiredInputForAction(action) {
         return ["origin", "destination"];
     if (action === "geo.site.map")
         return ["siteId"];
+    if (action === "desktop.screenshot")
+        return ["app"];
+    if (action === "desktop.click")
+        return ["app", "x", "y"];
+    if (action === "desktop.type")
+        return ["app", "text"];
+    if (action === "desktop.hotkey")
+        return ["app", "keys"];
+    if (action === "desktop.app.state")
+        return [];
     if (action.startsWith("desktop."))
         return ["app"];
     if (action.startsWith("legal.contract.") || action === "legal.risk.review")
@@ -261,7 +273,7 @@ function outputContractForAction(action) {
     if (action.startsWith("geo."))
         return ["status", "coordinates", "route"];
     if (action.startsWith("desktop."))
-        return ["status", "approvalRequired"];
+        return ["status", "app", "approvalRequired", "live", "platform", "path", "state"];
     if (action.startsWith("legal."))
         return ["status", "clauses", "risks", "approvalRequired"];
     if (action.startsWith("finance."))
@@ -347,6 +359,8 @@ function liveModeForAction(action, maturity) {
         return "disabled";
     if (maturity === "planned")
         return "prepared";
+    if (action === "desktop.app.open")
+        return process.env.ONECLAW_DESKTOP_ENABLED === "true" ? "live" : "prepared";
     if (action.startsWith("email.") ||
         action.startsWith("calendar.") ||
         action.startsWith("crm.") ||
@@ -467,7 +481,7 @@ export async function bootstrap(options) {
     workers.register(new VisionWorker());
     workers.register(new VideoWorker());
     workers.register(new GeoWorker());
-    workers.register(new RpaWorker());
+    workers.register(new RpaWorker(config));
     workers.register(new LegalWorker());
     workers.register(new AccountingWorker());
     workers.register(new SimulationWorker());
@@ -1162,16 +1176,34 @@ export async function bootstrap(options) {
             description: "Prepare desktop app open",
         },
         {
+            action: "desktop.screenshot",
+            workerName: "rpa_worker",
+            risk: "high",
+            description: "Capture a governed desktop screenshot",
+        },
+        {
             action: "desktop.click",
             workerName: "rpa_worker",
             risk: "high",
-            description: "Prepare desktop click",
+            description: "Click desktop coordinates",
         },
         {
             action: "desktop.type",
             workerName: "rpa_worker",
             risk: "high",
-            description: "Prepare desktop typing",
+            description: "Type into the active desktop app",
+        },
+        {
+            action: "desktop.hotkey",
+            workerName: "rpa_worker",
+            risk: "high",
+            description: "Send a desktop hotkey",
+        },
+        {
+            action: "desktop.app.state",
+            workerName: "rpa_worker",
+            risk: "low",
+            description: "Read desktop app state",
         },
         // Advanced Worker Pack: legal and contract
         {

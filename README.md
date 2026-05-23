@@ -28,7 +28,42 @@ Then open:
 - API: `http://localhost:4100`
 - Admin UI: `http://localhost:4100/admin`
 
-`
+## Desktop / local computer control
+
+The Desktop worker is `rpa_worker`. It exposes guarded desktop actions for a trusted local Mac OneClaw process:
+
+- `desktop.app.open`: live when `ONECLAW_DESKTOP_ENABLED=true` and the app is allowlisted
+- `desktop.screenshot`: capture governed screen evidence
+- `desktop.click`: click screen coordinates
+- `desktop.type`: type into an allowlisted app
+- `desktop.hotkey`: send a keyboard shortcut
+- `desktop.app.state`: read frontmost or allowlisted app state
+
+Cloud OneClaw can only control its cloud environment. To control your own Mac, run OneClaw locally and point TheOne to that local bridge.
+
+```bash
+ONECLAW_DESKTOP_ENABLED=true
+ONECLAW_DESKTOP_APP_ALLOWLIST=Google Chrome,Safari,Terminal,Notes,Mail,WeChat,Telegram
+```
+
+## Browser worker
+
+The browser worker is `browser_worker`. It uses Playwright Chromium and supports:
+
+- `browser.open`: open a URL
+- `browser.extract`: open or extract a rendered page
+- `browser.scrape`: scrape text or HTML
+- `browser.screenshot`: capture evidence
+- `browser.click`: click a selector
+- `browser.type`: type into a selector
+
+For production, keep browser access allowlisted:
+
+```bash
+ONECLAW_BROWSER_ALLOWLIST=https://oneai.network,https://theone-eta.vercel.app,https://x.com,https://github.com
+```
+
+`ONECLAW_BROWSER_ALLOWLIST` is for web hosts. Local browser apps such as `Google Chrome` and `Safari` are controlled through `desktop.app.open` and belong in `ONECLAW_DESKTOP_APP_ALLOWLIST`.
 
 ## X publishing payload
 

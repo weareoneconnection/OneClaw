@@ -85,7 +85,8 @@ function enrichCapability(registration: CapabilityRegistration): CapabilityRegis
 
 function requiredInputForAction(action: string): string[] {
   if (action.startsWith("browser.") && action !== "browser.screenshot") {
-    if (action === "browser.click" || action === "browser.type") return ["selector"];
+    if (action === "browser.type") return ["selector", "text"];
+    if (action === "browser.click") return ["selector"];
     return ["url"];
   }
   if (action.startsWith("api.")) return ["url"];
@@ -143,6 +144,11 @@ function requiredInputForAction(action: string): string[] {
   if (action === "geo.geocode") return ["address"];
   if (action === "geo.route.plan") return ["origin", "destination"];
   if (action === "geo.site.map") return ["siteId"];
+  if (action === "desktop.screenshot") return ["app"];
+  if (action === "desktop.click") return ["app", "x", "y"];
+  if (action === "desktop.type") return ["app", "text"];
+  if (action === "desktop.hotkey") return ["app", "keys"];
+  if (action === "desktop.app.state") return [];
   if (action.startsWith("desktop.")) return ["app"];
   if (action.startsWith("legal.contract.") || action === "legal.risk.review") return [];
   if (action === "legal.approval.package") return ["title"];
@@ -179,7 +185,7 @@ function outputContractForAction(action: string): string[] {
   if (action.startsWith("image.") || action === "construction.photo.inspect") return ["status", "findings", "text"];
   if (action.startsWith("video.") || action.startsWith("camera.")) return ["status", "summary", "alerts"];
   if (action.startsWith("geo.")) return ["status", "coordinates", "route"];
-  if (action.startsWith("desktop.")) return ["status", "approvalRequired"];
+  if (action.startsWith("desktop.")) return ["status", "app", "approvalRequired", "live", "platform", "path", "state"];
   if (action.startsWith("legal.")) return ["status", "clauses", "risks", "approvalRequired"];
   if (action.startsWith("finance.")) return ["status", "fields", "exceptions", "variances"];
   if (action.startsWith("simulation.") || action.startsWith("digitalTwin.")) return ["status", "scenarios", "forecast"];
@@ -230,6 +236,7 @@ function maturityForAction(action: string): CapabilityRegistration["maturity"] {
 function liveModeForAction(action: string, maturity: CapabilityRegistration["maturity"]): CapabilityRegistration["liveMode"] {
   if (maturity === "stub") return "disabled";
   if (maturity === "planned") return "prepared";
+  if (action === "desktop.app.open") return process.env.ONECLAW_DESKTOP_ENABLED === "true" ? "live" : "prepared";
   if (
     action.startsWith("email.") ||
     action.startsWith("calendar.") ||
@@ -353,7 +360,7 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
   workers.register(new VisionWorker());
   workers.register(new VideoWorker());
   workers.register(new GeoWorker());
-  workers.register(new RpaWorker());
+  workers.register(new RpaWorker(config));
   workers.register(new LegalWorker());
   workers.register(new AccountingWorker());
   workers.register(new SimulationWorker());
@@ -1076,16 +1083,34 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       description: "Prepare desktop app open",
     },
     {
+      action: "desktop.screenshot",
+      workerName: "rpa_worker",
+      risk: "high",
+      description: "Capture a governed desktop screenshot",
+    },
+    {
       action: "desktop.click",
       workerName: "rpa_worker",
       risk: "high",
-      description: "Prepare desktop click",
+      description: "Click desktop coordinates",
     },
     {
       action: "desktop.type",
       workerName: "rpa_worker",
       risk: "high",
-      description: "Prepare desktop typing",
+      description: "Type into the active desktop app",
+    },
+    {
+      action: "desktop.hotkey",
+      workerName: "rpa_worker",
+      risk: "high",
+      description: "Send a desktop hotkey",
+    },
+    {
+      action: "desktop.app.state",
+      workerName: "rpa_worker",
+      risk: "low",
+      description: "Read desktop app state",
     },
 
     // Advanced Worker Pack: legal and contract

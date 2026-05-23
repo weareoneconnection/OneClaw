@@ -29,5 +29,7 @@ export interface AppConfig {
     maxAutoDatabaseWriteRows: number;
     githubToken?: string;
     githubDefaultOwner?: string;
+    desktopEnabled: boolean;
+    desktopAppAllowlist: string[];
 }
 export declare function loadConfig(): AppConfig;

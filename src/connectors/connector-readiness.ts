@@ -27,6 +27,7 @@ function readiness(input: {
   prepared?: boolean;
   disabled?: boolean;
   dryRun?: boolean;
+  live?: boolean;
   note: string;
 }): ConnectorReadiness {
   const requiredEnv = input.requiredEnv ?? [];
@@ -36,6 +37,8 @@ function readiness(input: {
     ? "disabled"
     : input.dryRun
       ? "dry_run"
+      : input.live
+        ? "connected"
       : allConfigured
         ? "connected"
         : input.prepared
@@ -87,8 +90,9 @@ export function getConnectorReadiness(config: AppConfig): ConnectorReadiness[] {
       title: "Browser",
       domain: "browser",
       prepared: true,
-      actions: ["browser.open", "browser.extract", "browser.click", "browser.type"],
-      note: config.browserAllowlist.length ? "Browser hosts are allowlisted." : "Browser is available in development mode; configure host allowlist for production.",
+      live: true,
+      actions: ["browser.open", "browser.extract", "browser.scrape", "browser.screenshot", "browser.click", "browser.type"],
+      note: config.browserAllowlist.length ? "Browser hosts are allowlisted." : "Browser is live in development mode; configure host allowlist for production.",
     }),
     readiness({
       key: "api",
@@ -160,6 +164,18 @@ export function getConnectorReadiness(config: AppConfig): ConnectorReadiness[] {
       prepared: true,
       actions: ["knowledge.upsert", "knowledge.query", "vector.upsert", "vector.query"],
       note: "Knowledge worker is prepared; connect vector DB for live retrieval.",
+    }),
+    readiness({
+      key: "desktop",
+      title: "Desktop / RPA",
+      domain: "desktop",
+      requiredEnv: ["ONECLAW_DESKTOP_ENABLED", "ONECLAW_DESKTOP_APP_ALLOWLIST"],
+      prepared: true,
+      disabled: !config.desktopEnabled,
+      actions: ["desktop.app.open", "desktop.screenshot", "desktop.click", "desktop.type", "desktop.hotkey", "desktop.app.state"],
+      note: config.desktopEnabled
+        ? "Desktop RPA is live for allowlisted local macOS apps; screenshot/click/type/hotkey remain approval-gated."
+        : "Desktop worker is disabled until ONECLAW_DESKTOP_ENABLED=true and an app allowlist is configured.",
     }),
   ];
 }

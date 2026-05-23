@@ -7,6 +7,7 @@ type OneClawStep = {
 };
 type OneClawTask = {
     taskName: string;
+    approvalMode?: "auto" | "manual";
     steps: OneClawStep[];
 };
 export declare function extractOneClawTask(result: unknown): OneClawTask | null;

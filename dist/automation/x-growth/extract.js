@@ -20,6 +20,18 @@ function isOneClawAction(value) {
         "file.write",
         "message.send",
         "social.post",
+        "x.searchRecentTweets",
+        "x.getTweet",
+        "git.repo.get",
+        "git.repo.search",
+        "git.actions.runs",
+        "git.issue.create",
+        "git.pr.create",
+        "email.draft",
+        "email.send",
+        "calendar.event.create",
+        "knowledge.query",
+        "knowledge.upsert",
     ].includes(value);
 }
 function normalizeStep(step, index) {
@@ -46,10 +58,22 @@ export function extractOneClawTask(result) {
         ? root.data
         : root;
     const shouldExecute = Boolean(data.shouldExecute);
-    const task = data.oneclawTask;
+    const envelope = isObject(data.theoneTask)
+        ? data.theoneTask
+        : null;
+    const task = isObject(envelope?.oneclawTask)
+        ? envelope.oneclawTask
+        : data.oneclawTask;
     if (!shouldExecute || !isObject(task)) {
         return null;
     }
+    const policy = isObject(envelope?.automationPolicy)
+        ? envelope.automationPolicy
+        : null;
+    const rawApprovalMode = asString(policy?.approvalMode);
+    const approvalMode = rawApprovalMode === "manual" || rawApprovalMode === "auto"
+        ? rawApprovalMode
+        : undefined;
     const taskName = asString(task.taskName) || "oneclaw_task";
     const rawSteps = Array.isArray(task.steps) ? task.steps : [];
     const seenIds = new Set();
@@ -73,6 +97,7 @@ export function extractOneClawTask(result) {
     }
     return {
         taskName,
+        ...(approvalMode ? { approvalMode } : {}),
         steps,
     };
 }

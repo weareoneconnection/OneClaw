@@ -9,6 +9,7 @@ type OneClawStep = {
 
 type OneClawTask = {
   taskName: string;
+  approvalMode?: "auto" | "manual";
   steps: OneClawStep[];
 };
 
@@ -36,6 +37,18 @@ function isOneClawAction(value: string): value is OneClawAction {
     "file.write",
     "message.send",
     "social.post",
+    "x.searchRecentTweets",
+    "x.getTweet",
+    "git.repo.get",
+    "git.repo.search",
+    "git.actions.runs",
+    "git.issue.create",
+    "git.pr.create",
+    "email.draft",
+    "email.send",
+    "calendar.event.create",
+    "knowledge.query",
+    "knowledge.upsert",
   ].includes(value);
 }
 
@@ -70,12 +83,25 @@ export function extractOneClawTask(result: unknown): OneClawTask | null {
       : root;
 
   const shouldExecute = Boolean(data.shouldExecute);
-  const task = data.oneclawTask;
+  const envelope = isObject(data.theoneTask)
+    ? (data.theoneTask as Record<string, unknown>)
+    : null;
+  const task = isObject(envelope?.oneclawTask)
+    ? envelope.oneclawTask
+    : data.oneclawTask;
 
   if (!shouldExecute || !isObject(task)) {
     return null;
   }
 
+  const policy = isObject(envelope?.automationPolicy)
+    ? (envelope.automationPolicy as Record<string, unknown>)
+    : null;
+  const rawApprovalMode = asString(policy?.approvalMode);
+  const approvalMode =
+    rawApprovalMode === "manual" || rawApprovalMode === "auto"
+      ? rawApprovalMode
+      : undefined;
   const taskName = asString(task.taskName) || "oneclaw_task";
   const rawSteps = Array.isArray(task.steps) ? task.steps : [];
 
@@ -104,6 +130,7 @@ export function extractOneClawTask(result: unknown): OneClawTask | null {
 
   return {
     taskName,
+    ...(approvalMode ? { approvalMode } : {}),
     steps,
   };
 }

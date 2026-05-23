@@ -35,7 +35,19 @@ function hostMatchesAllowlist(urlValue: string, allowlist: string[]): boolean {
   if (allowlist.length === 0) return true;
   try {
     const url = new URL(urlValue);
-    return allowlist.some((allowed) => url.hostname === allowed || url.hostname.endsWith(`.${allowed}`));
+    return allowlist.some((allowed) => {
+      const normalized = String(allowed ?? "").trim();
+      if (!normalized) return false;
+
+      let allowedHost = normalized;
+      try {
+        allowedHost = new URL(normalized).hostname;
+      } catch {
+        allowedHost = normalized.replace(/^https?:\/\//, "").split("/")[0] ?? normalized;
+      }
+
+      return url.hostname === allowedHost || url.hostname.endsWith(`.${allowedHost}`);
+    });
   } catch {
     return false;
   }

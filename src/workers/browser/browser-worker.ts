@@ -32,6 +32,24 @@ function asPositiveNumber(value: Json | undefined): number | undefined {
   return undefined;
 }
 
+function normalizeWaitUntil(value: Json | undefined): "load" | "domcontentloaded" | "networkidle" | "commit" {
+  const waitUntilRaw = asString(value).toLowerCase();
+  if (
+    waitUntilRaw === "load" ||
+    waitUntilRaw === "domcontentloaded" ||
+    waitUntilRaw === "networkidle" ||
+    waitUntilRaw === "commit"
+  ) {
+    return waitUntilRaw;
+  }
+  return "domcontentloaded";
+}
+
+function conciseError(message: string): string {
+  const firstLine = message.split("\n").find((line) => line.trim()) ?? message;
+  return firstLine.length > 500 ? `${firstLine.slice(0, 497)}...` : firstLine;
+}
+
 export class BrowserWorker implements Worker {
   readonly name = "browser_worker";
 
@@ -48,13 +66,13 @@ export class BrowserWorker implements Worker {
 
     let session = this.sessionManager.getBrowserSession(context.taskId);
 
-    if (!session) {
-      await context.log(`BrowserWorker launching new session for task=${context.taskId}`);
-      session = await this.browserAdapter.launch();
-      this.sessionManager.setBrowserSession(context.taskId, session);
-    }
-
     try {
+      if (!session) {
+        await context.log(`BrowserWorker launching new session for task=${context.taskId}`);
+        session = await this.browserAdapter.launch();
+        this.sessionManager.setBrowserSession(context.taskId, session);
+      }
+
       switch (context.action) {
         case "browser.open": {
           const url = asString(input.url);
@@ -65,15 +83,7 @@ export class BrowserWorker implements Worker {
             };
           }
 
-          const waitUntilRaw = asString(input.waitUntil).toLowerCase();
-          const waitUntil =
-            waitUntilRaw === "load" ||
-            waitUntilRaw === "domcontentloaded" ||
-            waitUntilRaw === "networkidle" ||
-            waitUntilRaw === "commit"
-              ? waitUntilRaw
-              : "domcontentloaded";
-
+          const waitUntil = normalizeWaitUntil(input.waitUntil);
           const timeoutMs = asPositiveNumber(input.timeoutMs) ?? 45000;
 
           await this.browserAdapter.goto(session.page, url, {
@@ -228,8 +238,16 @@ export class BrowserWorker implements Worker {
         }
 
         case "browser.scrape": {
+          const url = asOptionalString(input.url);
           const selector = asOptionalString(input.selector);
           const mode = asString(input.mode).toLowerCase() === "html" ? "html" : "text";
+
+          if (url) {
+            await this.browserAdapter.goto(session.page, url, {
+              waitUntil: normalizeWaitUntil(input.waitUntil),
+              timeoutMs: asPositiveNumber(input.timeoutMs) ?? 45000,
+            });
+          }
 
           const content = await this.browserAdapter.scrape(
             session.page,
@@ -258,9 +276,17 @@ export class BrowserWorker implements Worker {
         }
 
         case "browser.extract": {
+          const url = asOptionalString(input.url);
           const selector = asOptionalString(input.selector);
           const includeHtml = asBoolean(input.includeHtml, false);
           const maxTextLength = asPositiveNumber(input.maxTextLength);
+
+          if (url) {
+            await this.browserAdapter.goto(session.page, url, {
+              waitUntil: normalizeWaitUntil(input.waitUntil),
+              timeoutMs: asPositiveNumber(input.timeoutMs) ?? 45000,
+            });
+          }
 
           const extracted = await this.browserAdapter.extractPage(session.page, {
             selector,
@@ -297,7 +323,7 @@ export class BrowserWorker implements Worker {
 
       return {
         ok: false,
-        error: message,
+        error: conciseError(message),
       };
     }
   }
