@@ -29,7 +29,11 @@ export interface AppConfig {
     maxAutoDatabaseWriteRows: number;
     githubToken?: string;
     githubDefaultOwner?: string;
+    bridgeMode: "api" | "desktop";
+    bridgeId: string;
+    bridgeName: string;
     desktopEnabled: boolean;
     desktopAppAllowlist: string[];
+    desktopAppBlocklist: string[];
 }
 export declare function loadConfig(): AppConfig;

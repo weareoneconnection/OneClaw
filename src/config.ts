@@ -29,8 +29,12 @@ export interface AppConfig {
   maxAutoDatabaseWriteRows: number;
   githubToken?: string;
   githubDefaultOwner?: string;
+  bridgeMode: "api" | "desktop";
+  bridgeId: string;
+  bridgeName: string;
   desktopEnabled: boolean;
   desktopAppAllowlist: string[];
+  desktopAppBlocklist: string[];
 }
 
 export function loadConfig(): AppConfig {
@@ -65,8 +69,12 @@ export function loadConfig(): AppConfig {
     maxAutoDatabaseWriteRows: Number(process.env.ONECLAW_MAX_AUTO_DB_WRITE_ROWS ?? 0),
     githubToken: process.env.GITHUB_TOKEN,
     githubDefaultOwner: process.env.GITHUB_DEFAULT_OWNER,
+    bridgeMode: process.env.ONECLAW_BRIDGE_MODE === "desktop" ? "desktop" : "api",
+    bridgeId: process.env.ONECLAW_BRIDGE_ID ?? `oneclaw-${hostnameSafe()}`,
+    bridgeName: process.env.ONECLAW_BRIDGE_NAME ?? "OneClaw Local Desktop Bridge",
     desktopEnabled: process.env.ONECLAW_DESKTOP_ENABLED === "true",
     desktopAppAllowlist: splitList(process.env.ONECLAW_DESKTOP_APP_ALLOWLIST),
+    desktopAppBlocklist: splitList(process.env.ONECLAW_DESKTOP_APP_BLOCKLIST),
   };
 }
 
@@ -75,4 +83,11 @@ function splitList(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function hostnameSafe(): string {
+  return String(process.env.HOSTNAME ?? "local")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .slice(0, 64) || "local";
 }

@@ -5,6 +5,7 @@ export function registerWorkerRoutes(app, services) {
             workers: services.workers.list().map((worker) => ({
                 name: worker.name,
                 status: "registered",
+                bridgeRole: worker.name === "rpa_worker" ? "local_desktop_bridge" : undefined,
             })),
         });
     });

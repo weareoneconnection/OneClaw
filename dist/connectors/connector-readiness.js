@@ -139,13 +139,13 @@ export function getConnectorReadiness(config) {
             key: "desktop",
             title: "Desktop / RPA",
             domain: "desktop",
-            requiredEnv: ["ONECLAW_DESKTOP_ENABLED", "ONECLAW_DESKTOP_APP_ALLOWLIST"],
+            requiredEnv: ["ONECLAW_BRIDGE_MODE", "ONECLAW_DESKTOP_ENABLED", "ONECLAW_DESKTOP_APP_ALLOWLIST"],
             prepared: true,
-            disabled: !config.desktopEnabled,
+            disabled: config.bridgeMode !== "desktop" || !config.desktopEnabled,
             actions: ["desktop.app.open", "desktop.screenshot", "desktop.click", "desktop.type", "desktop.hotkey", "desktop.app.state"],
-            note: config.desktopEnabled
+            note: config.bridgeMode === "desktop" && config.desktopEnabled
                 ? "Desktop RPA is live for allowlisted local macOS apps; screenshot/click/type/hotkey remain approval-gated."
-                : "Desktop worker is disabled until ONECLAW_DESKTOP_ENABLED=true and an app allowlist is configured.",
+                : "Desktop worker is disabled until ONECLAW_BRIDGE_MODE=desktop, ONECLAW_DESKTOP_ENABLED=true, and an app allowlist are configured.",
         }),
     ];
 }

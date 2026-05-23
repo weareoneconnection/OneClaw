@@ -32,6 +32,10 @@ function isAllowedApp(app, allowlist) {
     const normalized = app.toLowerCase();
     return allowlist.some((item) => item.toLowerCase() === normalized);
 }
+function isBlockedApp(app, blocklist) {
+    const normalized = app.toLowerCase();
+    return blocklist.some((item) => item.toLowerCase() === normalized);
+}
 function appCandidates(app) {
     const appName = app.endsWith(".app") ? app : `${app}.app`;
     return [
@@ -119,6 +123,19 @@ export class RpaWorker {
         if (context.action.startsWith("desktop.") && context.action !== "desktop.app.state") {
             if (!app)
                 return { ok: false, error: `${context.action} requires input.app` };
+            if (isBlockedApp(app, this.config.desktopAppBlocklist)) {
+                return {
+                    ok: false,
+                    error: `${context.action} app is blocked by desktop policy: ${app}`,
+                    output: {
+                        provider: "rpa",
+                        action: context.action,
+                        status: "desktop_action_blocked",
+                        app,
+                        blocklist: this.config.desktopAppBlocklist,
+                    },
+                };
+            }
             if (!isAllowedApp(app, this.config.desktopAppAllowlist)) {
                 return {
                     ok: false,
@@ -362,6 +379,19 @@ export class RpaWorker {
             }
         }
         if (context.action === "desktop.app.state") {
+            if (app && isBlockedApp(app, this.config.desktopAppBlocklist)) {
+                return {
+                    ok: false,
+                    error: `desktop.app.state app is blocked by desktop policy: ${app}`,
+                    output: {
+                        provider: "rpa",
+                        action: context.action,
+                        status: "desktop_state_blocked",
+                        app,
+                        blocklist: this.config.desktopAppBlocklist,
+                    },
+                };
+            }
             if (app && !isAllowedApp(app, this.config.desktopAppAllowlist)) {
                 return {
                     ok: false,

@@ -42,9 +42,23 @@ The Desktop worker is `rpa_worker`. It exposes guarded desktop actions for a tru
 Cloud OneClaw can only control its cloud environment. To control your own Mac, run OneClaw locally and point TheOne to that local bridge.
 
 ```bash
+ONECLAW_BRIDGE_MODE=desktop
+ONECLAW_BRIDGE_ID=maqing-macbook
+ONECLAW_BRIDGE_NAME="Ma Qing Mac Desktop Bridge"
 ONECLAW_DESKTOP_ENABLED=true
 ONECLAW_DESKTOP_APP_ALLOWLIST=Google Chrome,Safari,Terminal,Notes,Mail,WeChat,Telegram
+ONECLAW_DESKTOP_APP_BLOCKLIST=System Settings,Keychain Access,1Password
 ```
+
+Bridge status and diagnostics:
+
+```bash
+curl http://localhost:4100/v1/bridge/status
+curl http://localhost:4100/v1/bridge/diagnostics
+curl http://localhost:4100/v1/bridge/registration
+```
+
+For a persistent Mac bridge, run OneClaw from a trusted local terminal or package it as a LaunchAgent/menu bar app. The local process needs macOS Accessibility permission for click/type/hotkey/state and Screen Recording permission for screenshots.
 
 ## Browser worker
 

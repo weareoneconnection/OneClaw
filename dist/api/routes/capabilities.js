@@ -1,4 +1,5 @@
 import { getConnectorReadiness, summarizeMaturity } from "../../connectors/connector-readiness.js";
+import { getBridgeStatus } from "../../bridge/desktop-bridge.js";
 export function registerCapabilityRoutes(app, services) {
     app.get("/v1/capabilities", (_req, res) => {
         const capabilities = services.capabilities.manifest();
@@ -10,6 +11,7 @@ export function registerCapabilityRoutes(app, services) {
             maturity: summarizeMaturity(capabilities),
             capabilities,
             connectors,
+            bridge: getBridgeStatus(services.config).bridge,
             plugins: services.plugins ?? [],
         });
     });

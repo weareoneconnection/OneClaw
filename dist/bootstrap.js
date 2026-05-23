@@ -359,8 +359,11 @@ function liveModeForAction(action, maturity) {
         return "disabled";
     if (maturity === "planned")
         return "prepared";
-    if (action === "desktop.app.open")
-        return process.env.ONECLAW_DESKTOP_ENABLED === "true" ? "live" : "prepared";
+    if (action.startsWith("desktop.")) {
+        return process.env.ONECLAW_BRIDGE_MODE === "desktop" && process.env.ONECLAW_DESKTOP_ENABLED === "true"
+            ? "live"
+            : "prepared";
+    }
     if (action.startsWith("email.") ||
         action.startsWith("calendar.") ||
         action.startsWith("crm.") ||
@@ -374,7 +377,6 @@ function liveModeForAction(action, maturity) {
         action.startsWith("image.") ||
         action.startsWith("video.") ||
         action.startsWith("geo.") ||
-        action.startsWith("desktop.") ||
         action.startsWith("legal.") ||
         action.startsWith("finance.") ||
         action.startsWith("simulation.") ||

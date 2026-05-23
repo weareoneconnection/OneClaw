@@ -11,6 +11,7 @@ import { registerSubtaskRoutes } from "./routes/subtasks.js";
 import { registerConnectorRoutes } from "./routes/connectors.js";
 import { registerWorkerRoutes } from "./routes/workers.js";
 import { registerReplayRoutes } from "./routes/replay.js";
+import { registerBridgeRoutes } from "./routes/bridge.js";
 
 export function createServer(services: AppServices) {
   const app = express();
@@ -25,6 +26,7 @@ export function createServer(services: AppServices) {
   registerConnectorRoutes(app, services);
   registerWorkerRoutes(app, services);
   registerReplayRoutes(app, services);
+  registerBridgeRoutes(app, services);
   registerAdminRoutes(app, services);
   return app;
 }

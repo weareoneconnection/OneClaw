@@ -236,7 +236,11 @@ function maturityForAction(action: string): CapabilityRegistration["maturity"] {
 function liveModeForAction(action: string, maturity: CapabilityRegistration["maturity"]): CapabilityRegistration["liveMode"] {
   if (maturity === "stub") return "disabled";
   if (maturity === "planned") return "prepared";
-  if (action === "desktop.app.open") return process.env.ONECLAW_DESKTOP_ENABLED === "true" ? "live" : "prepared";
+  if (action.startsWith("desktop.")) {
+    return process.env.ONECLAW_BRIDGE_MODE === "desktop" && process.env.ONECLAW_DESKTOP_ENABLED === "true"
+      ? "live"
+      : "prepared";
+  }
   if (
     action.startsWith("email.") ||
     action.startsWith("calendar.") ||
@@ -251,7 +255,6 @@ function liveModeForAction(action: string, maturity: CapabilityRegistration["mat
     action.startsWith("image.") ||
     action.startsWith("video.") ||
     action.startsWith("geo.") ||
-    action.startsWith("desktop.") ||
     action.startsWith("legal.") ||
     action.startsWith("finance.") ||
     action.startsWith("simulation.") ||
