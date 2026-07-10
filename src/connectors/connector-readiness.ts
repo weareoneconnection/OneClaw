@@ -148,6 +148,15 @@ export function getConnectorReadiness(config: AppConfig): ConnectorReadiness[] {
       note: "GitHub live connector supports repo search, CI status, and approval-gated issue creation.",
     }),
     readiness({
+      key: "code_workspace",
+      title: "Code Workspace",
+      domain: "code",
+      requiredEnv: ["ONECLAW_CODE_WORKSPACE_ALLOWLIST"],
+      prepared: true,
+      actions: ["code.workspace.status", "code.diff.prepare", "code.patch.apply"],
+      note: "Code workspace supports guarded status checks, diff preparation, and approval-gated patch application.",
+    }),
+    readiness({
       key: "stripe",
       title: "Stripe / Payment",
       domain: "payment",

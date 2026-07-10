@@ -65,9 +65,9 @@ function enrichCapability(registration) {
         liveMode,
         approvalRequired: registration.risk === "high" ||
             registration.risk === "critical" ||
-            ["message.send", "social.post", "file.write", "file.append", "file.delete"].includes(registration.action),
-        supportsDryRun: ["social.post", "message.send", "api.request", "api.webhook", "file.write", "file.append"].includes(registration.action),
-        supportsRollback: ["file.write", "file.append"].includes(registration.action),
+            ["message.send", "social.post", "file.write", "file.append", "file.delete", "code.patch.apply"].includes(registration.action),
+        supportsDryRun: ["social.post", "message.send", "api.request", "api.webhook", "file.write", "file.append", "code.diff.prepare"].includes(registration.action),
+        supportsRollback: ["file.write", "file.append", "code.patch.apply"].includes(registration.action),
         inputSchema: {
             required,
             properties: {},
@@ -161,6 +161,12 @@ function requiredInputForAction(action) {
         return ["repo"];
     if (action === "git.repo.search")
         return ["query"];
+    if (action === "code.workspace.status")
+        return [];
+    if (action === "code.diff.prepare")
+        return ["files"];
+    if (action === "code.patch.apply")
+        return ["files"];
     if (action === "device.status.read")
         return ["deviceId"];
     if (action === "device.command.prepare")
@@ -260,6 +266,8 @@ function outputContractForAction(action) {
         return ["status", "approvalRequired"];
     if (action.startsWith("git."))
         return ["status", "repo"];
+    if (action.startsWith("code."))
+        return ["status", "workspacePath", "files", "diff", "changedFiles"];
     if (action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot."))
         return ["status", "deviceId", "approvalRequired"];
     if (action.startsWith("knowledge.") || action.startsWith("vector."))
@@ -315,6 +323,8 @@ function permissionsForAction(action) {
         return ["commerce", "transaction"];
     if (action.startsWith("git."))
         return ["code"];
+    if (action.startsWith("code."))
+        return ["code", "filesystem"];
     if (action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot."))
         return ["device"];
     if (action.startsWith("knowledge.") || action.startsWith("vector."))
@@ -343,6 +353,8 @@ function maturityForAction(action) {
     if (action.startsWith("shell.") || action.startsWith("email.") || action.startsWith("calendar.") || action.startsWith("database.") || action.startsWith("search.") || action.startsWith("notification."))
         return "guarded";
     if (action.startsWith("crm.") || action.startsWith("commerce.") || action.startsWith("payment.") || action.startsWith("git.") || action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot.") || action.startsWith("knowledge.") || action.startsWith("vector."))
+        return "guarded";
+    if (action.startsWith("code."))
         return "guarded";
     if (action.startsWith("audio.") || action.startsWith("voice.") || action.startsWith("image.") || action.startsWith("video.") || action.startsWith("camera.") || action.startsWith("geo.") || action.startsWith("desktop.") || action.startsWith("legal.") || action.startsWith("finance.") || action.startsWith("simulation.") || action.startsWith("digitalTwin."))
         return "guarded";
@@ -407,6 +419,8 @@ function connectorKeyForAction(action) {
         return "calendar";
     if (action.startsWith("git."))
         return "github";
+    if (action.startsWith("code."))
+        return "code_workspace";
     if (action.startsWith("payment."))
         return "stripe";
     if (action.startsWith("knowledge.") || action.startsWith("vector."))
@@ -1043,6 +1057,52 @@ export async function bootstrap(options) {
             workerName: "code_worker",
             risk: "medium",
             description: "Prepare a repository search",
+        },
+        {
+            action: "code.workspace.status",
+            workerName: "code_worker",
+            risk: "low",
+            description: "Read code workspace readiness and policy bounds",
+            approvalRequired: false,
+            inputSchema: {
+                required: [],
+                properties: {
+                    workspacePath: "string",
+                },
+            },
+            outputContract: ["status", "workspacePath", "exists", "allowed", "allowedRoots"],
+        },
+        {
+            action: "code.diff.prepare",
+            workerName: "code_worker",
+            risk: "medium",
+            description: "Prepare a code change diff without writing files",
+            approvalRequired: false,
+            supportsDryRun: true,
+            inputSchema: {
+                required: ["files"],
+                properties: {
+                    workspacePath: "string",
+                    files: "array",
+                },
+            },
+            outputContract: ["status", "workspacePath", "files", "diff", "applyReady"],
+        },
+        {
+            action: "code.patch.apply",
+            workerName: "code_worker",
+            risk: "high",
+            description: "Apply an approved code patch to a workspace",
+            approvalRequired: true,
+            supportsRollback: true,
+            inputSchema: {
+                required: ["files"],
+                properties: {
+                    workspacePath: "string",
+                    files: "array",
+                },
+            },
+            outputContract: ["status", "workspacePath", "changedFiles", "diff"],
         },
         // Universal OS Worker Pack: device and IoT
         {

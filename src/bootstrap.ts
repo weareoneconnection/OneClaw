@@ -70,9 +70,9 @@ function enrichCapability(registration: CapabilityRegistration): CapabilityRegis
     approvalRequired:
       registration.risk === "high" ||
       registration.risk === "critical" ||
-      ["message.send", "social.post", "file.write", "file.append", "file.delete"].includes(registration.action),
-    supportsDryRun: ["social.post", "message.send", "api.request", "api.webhook", "file.write", "file.append"].includes(registration.action),
-    supportsRollback: ["file.write", "file.append"].includes(registration.action),
+      ["message.send", "social.post", "file.write", "file.append", "file.delete", "code.patch.apply"].includes(registration.action),
+    supportsDryRun: ["social.post", "message.send", "api.request", "api.webhook", "file.write", "file.append", "code.diff.prepare"].includes(registration.action),
+    supportsRollback: ["file.write", "file.append", "code.patch.apply"].includes(registration.action),
     inputSchema: {
       required,
       properties: {},
@@ -127,6 +127,9 @@ function requiredInputForAction(action: string): string[] {
   if (action === "git.checks.list") return ["repo"];
   if (action === "git.actions.runs") return ["repo"];
   if (action === "git.repo.search") return ["query"];
+  if (action === "code.workspace.status") return [];
+  if (action === "code.diff.prepare") return ["files"];
+  if (action === "code.patch.apply") return ["files"];
   if (action === "device.status.read") return ["deviceId"];
   if (action === "device.command.prepare") return ["deviceId", "command"];
   if (action === "iot.sensor.read") return ["sensorId"];
@@ -179,6 +182,7 @@ function outputContractForAction(action: string): string[] {
   if (action.startsWith("crm.")) return ["status", "payload"];
   if (action.startsWith("commerce.") || action.startsWith("payment.")) return ["status", "approvalRequired"];
   if (action.startsWith("git.")) return ["status", "repo"];
+  if (action.startsWith("code.")) return ["status", "workspacePath", "files", "diff", "changedFiles"];
   if (action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot.")) return ["status", "deviceId", "approvalRequired"];
   if (action.startsWith("knowledge.") || action.startsWith("vector.")) return ["status", "namespace", "results"];
   if (action.startsWith("audio.") || action.startsWith("voice.")) return ["status", "transcript", "text"];
@@ -209,6 +213,7 @@ function permissionsForAction(action: string): string[] {
   if (action.startsWith("crm.")) return ["crm"];
   if (action.startsWith("commerce.") || action.startsWith("payment.")) return ["commerce", "transaction"];
   if (action.startsWith("git.")) return ["code"];
+  if (action.startsWith("code.")) return ["code", "filesystem"];
   if (action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot.")) return ["device"];
   if (action.startsWith("knowledge.") || action.startsWith("vector.")) return ["knowledge"];
   if (action.startsWith("audio.") || action.startsWith("voice.")) return ["audio"];
@@ -226,6 +231,7 @@ function maturityForAction(action: string): CapabilityRegistration["maturity"] {
   if (action.startsWith("document.") || action.startsWith("spreadsheet.") || action.startsWith("storage.") || action.startsWith("identity.") || action.startsWith("secret.")) return "guarded";
   if (action.startsWith("shell.") || action.startsWith("email.") || action.startsWith("calendar.") || action.startsWith("database.") || action.startsWith("search.") || action.startsWith("notification.")) return "guarded";
   if (action.startsWith("crm.") || action.startsWith("commerce.") || action.startsWith("payment.") || action.startsWith("git.") || action.startsWith("device.") || action.startsWith("iot.") || action.startsWith("robot.") || action.startsWith("knowledge.") || action.startsWith("vector.")) return "guarded";
+  if (action.startsWith("code.")) return "guarded";
   if (action.startsWith("audio.") || action.startsWith("voice.") || action.startsWith("image.") || action.startsWith("video.") || action.startsWith("camera.") || action.startsWith("geo.") || action.startsWith("desktop.") || action.startsWith("legal.") || action.startsWith("finance.") || action.startsWith("simulation.") || action.startsWith("digitalTwin.")) return "guarded";
   if (action.startsWith("browser.") || action.startsWith("api.") || action.startsWith("file.") || action.startsWith("message.") || action.startsWith("human.")) return "guarded";
   if (action.startsWith("construction.")) return "planned";
@@ -276,6 +282,7 @@ function connectorKeyForAction(action: string): string {
   if (action.startsWith("email.")) return "email";
   if (action.startsWith("calendar.")) return "calendar";
   if (action.startsWith("git.")) return "github";
+  if (action.startsWith("code.")) return "code_workspace";
   if (action.startsWith("payment.")) return "stripe";
   if (action.startsWith("knowledge.") || action.startsWith("vector.")) return "knowledge";
   return action.split(".")[0] || "custom";
@@ -944,6 +951,52 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       workerName: "code_worker",
       risk: "medium",
       description: "Prepare a repository search",
+    },
+    {
+      action: "code.workspace.status",
+      workerName: "code_worker",
+      risk: "low",
+      description: "Read code workspace readiness and policy bounds",
+      approvalRequired: false,
+      inputSchema: {
+        required: [] as string[],
+        properties: {
+          workspacePath: "string",
+        },
+      },
+      outputContract: ["status", "workspacePath", "exists", "allowed", "allowedRoots"] as string[],
+    },
+    {
+      action: "code.diff.prepare",
+      workerName: "code_worker",
+      risk: "medium",
+      description: "Prepare a code change diff without writing files",
+      approvalRequired: false,
+      supportsDryRun: true,
+      inputSchema: {
+        required: ["files"] as string[],
+        properties: {
+          workspacePath: "string",
+          files: "array",
+        },
+      },
+      outputContract: ["status", "workspacePath", "files", "diff", "applyReady"] as string[],
+    },
+    {
+      action: "code.patch.apply",
+      workerName: "code_worker",
+      risk: "high",
+      description: "Apply an approved code patch to a workspace",
+      approvalRequired: true,
+      supportsRollback: true,
+      inputSchema: {
+        required: ["files"] as string[],
+        properties: {
+          workspacePath: "string",
+          files: "array",
+        },
+      },
+      outputContract: ["status", "workspacePath", "changedFiles", "diff"] as string[],
     },
 
     // Universal OS Worker Pack: device and IoT
