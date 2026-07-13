@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 function asString(value) {
     return String(value ?? "").trim();
 }
@@ -21,6 +21,20 @@ function normalizeWorkspaceRoots() {
         .map((item) => item.trim())
         .filter(Boolean)
         .map((item) => path.resolve(item));
+}
+function positiveNumber(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+function sandboxLimits() {
+    return {
+        maxFiles: positiveNumber(process.env.ONECLAW_CODE_MAX_FILES, 40),
+        maxFileBytes: positiveNumber(process.env.ONECLAW_CODE_MAX_FILE_BYTES, 512_000),
+        maxTotalBytes: positiveNumber(process.env.ONECLAW_CODE_MAX_TOTAL_BYTES, 4_000_000),
+        timeoutMs: positiveNumber(process.env.ONECLAW_CODE_TIMEOUT_MS, 60_000),
+        networkEgress: "none",
+        commandExecution: "disabled",
+    };
 }
 function isInside(parent, child) {
     const relative = path.relative(parent, child);
@@ -68,6 +82,61 @@ function extractCodeFiles(input) {
         }
         return { path: filePath, content };
     });
+}
+function validateCodeFiles(files) {
+    const limits = sandboxLimits();
+    if (files.length > limits.maxFiles) {
+        throw new Error(`Code sandbox allows at most ${limits.maxFiles} files per task`);
+    }
+    let totalBytes = 0;
+    for (const file of files) {
+        const bytes = Buffer.byteLength(file.content, "utf8");
+        if (bytes > limits.maxFileBytes) {
+            throw new Error(`${file.path} exceeds the ${limits.maxFileBytes} byte code sandbox limit`);
+        }
+        totalBytes += bytes;
+    }
+    if (totalBytes > limits.maxTotalBytes) {
+        throw new Error(`Code task exceeds the ${limits.maxTotalBytes} byte total sandbox limit`);
+    }
+    return { ...limits, totalBytes };
+}
+function assertWithinTimeout(startedAt, timeoutMs) {
+    if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`Code sandbox timed out after ${timeoutMs}ms`);
+    }
+}
+async function nearestExistingParent(filePath) {
+    let current = filePath;
+    while (true) {
+        const exists = await stat(current).then(() => true).catch(() => false);
+        if (exists)
+            return current;
+        const parent = path.dirname(current);
+        if (parent === current)
+            return current;
+        current = parent;
+    }
+}
+async function ensureNoSymlinkEscape(workspacePath, absolutePath) {
+    const workspaceRealPath = await realpath(workspacePath);
+    const existingParent = await nearestExistingParent(path.dirname(absolutePath));
+    const parentRealPath = await realpath(existingParent);
+    if (!isInside(workspaceRealPath, parentRealPath)) {
+        throw new Error(`code file path escapes workspace through a symlink: ${absolutePath}`);
+    }
+    const exists = await fileExists(absolutePath);
+    if (exists) {
+        const fileRealPath = await realpath(absolutePath);
+        if (!isInside(workspaceRealPath, fileRealPath)) {
+            throw new Error(`code file resolves outside workspacePath: ${absolutePath}`);
+        }
+    }
+}
+async function atomicWrite(filePath, content, suffix) {
+    const temporaryPath = `${filePath}.oneclaw-${suffix}.tmp`;
+    await writeFile(temporaryPath, content, "utf8");
+    await rename(temporaryPath, filePath);
 }
 async function readExistingText(filePath) {
     try {
@@ -153,6 +222,7 @@ export class CodeWorker {
                         exists,
                         allowed: true,
                         allowedRoots,
+                        sandbox: sandboxLimits(),
                     },
                 };
             }
@@ -162,14 +232,18 @@ export class CodeWorker {
         }
         if (context.action === "code.diff.prepare") {
             try {
+                const startedAt = Date.now();
                 const { workspacePath } = resolveWorkspace(input);
                 const files = extractCodeFiles(input);
                 if (!files.length)
                     return { ok: false, error: "code.diff.prepare requires input.files[]" };
+                const sandbox = validateCodeFiles(files);
                 const prepared = [];
                 const diffs = [];
                 for (const file of files) {
+                    assertWithinTimeout(startedAt, sandbox.timeoutMs);
                     const resolved = resolveWorkspaceFile(workspacePath, file.path);
+                    await ensureNoSymlinkEscape(workspacePath, resolved.absolutePath);
                     const before = await readExistingText(resolved.absolutePath);
                     const exists = await fileExists(resolved.absolutePath);
                     const diff = buildLineDiff(resolved.relativePath, before, file.content);
@@ -192,6 +266,11 @@ export class CodeWorker {
                         files: prepared,
                         diff: diffs.join("\n"),
                         applyReady: true,
+                        sandbox: {
+                            ...sandbox,
+                            filesystem: "read_only",
+                            elapsedMs: Date.now() - startedAt,
+                        },
                     },
                 };
             }
@@ -201,25 +280,45 @@ export class CodeWorker {
         }
         if (context.action === "code.patch.apply") {
             try {
+                const startedAt = Date.now();
                 const { workspacePath } = resolveWorkspace(input);
                 const files = extractCodeFiles(input);
                 if (!files.length)
                     return { ok: false, error: "code.patch.apply requires input.files[]" };
+                const sandbox = validateCodeFiles(files);
                 const changedFiles = [];
                 const diffs = [];
-                for (const file of files) {
-                    const resolved = resolveWorkspaceFile(workspacePath, file.path);
-                    const before = await readExistingText(resolved.absolutePath);
-                    const diff = buildLineDiff(resolved.relativePath, before, file.content);
-                    await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
-                    await writeFile(resolved.absolutePath, file.content, "utf8");
-                    diffs.push(diff);
-                    changedFiles.push({
-                        path: resolved.relativePath,
-                        changed: before !== file.content,
-                        beforeLength: before.length,
-                        afterLength: file.content.length,
-                    });
+                const backups = [];
+                try {
+                    for (const [index, file] of files.entries()) {
+                        assertWithinTimeout(startedAt, sandbox.timeoutMs);
+                        const resolved = resolveWorkspaceFile(workspacePath, file.path);
+                        await ensureNoSymlinkEscape(workspacePath, resolved.absolutePath);
+                        const existed = await fileExists(resolved.absolutePath);
+                        const before = await readExistingText(resolved.absolutePath);
+                        const diff = buildLineDiff(resolved.relativePath, before, file.content);
+                        backups.push({ absolutePath: resolved.absolutePath, before, existed });
+                        await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
+                        await atomicWrite(resolved.absolutePath, file.content, `${context.taskId}-${context.stepId}-${index}`.replace(/[^a-zA-Z0-9_-]/g, "-"));
+                        diffs.push(diff);
+                        changedFiles.push({
+                            path: resolved.relativePath,
+                            changed: before !== file.content,
+                            beforeLength: before.length,
+                            afterLength: file.content.length,
+                        });
+                    }
+                }
+                catch (error) {
+                    for (const backup of backups.reverse()) {
+                        if (backup.existed) {
+                            await writeFile(backup.absolutePath, backup.before, "utf8").catch(() => undefined);
+                        }
+                        else {
+                            await rm(backup.absolutePath, { force: true }).catch(() => undefined);
+                        }
+                    }
+                    throw error;
                 }
                 return {
                     ok: true,
@@ -230,6 +329,13 @@ export class CodeWorker {
                         workspacePath,
                         changedFiles,
                         diff: diffs.join("\n"),
+                        sandbox: {
+                            ...sandbox,
+                            filesystem: "read_write_approved",
+                            atomicWrites: true,
+                            rollback: "automatic_on_failure",
+                            elapsedMs: Date.now() - startedAt,
+                        },
                     },
                 };
             }

@@ -1,4 +1,5 @@
 import type { NormalizedTaskDefinition, TaskDefinition } from "../../types/task.js";
+import { normalizeCodeTask } from "./code-task-contract.js";
 
 export class TaskPlanner {
   normalize(input: TaskDefinition, defaultApprovalMode: "auto" | "manual"): NormalizedTaskDefinition {
@@ -20,11 +21,17 @@ export class TaskPlanner {
       }
     }
 
+    const normalizedCodeTask = normalizeCodeTask({
+      task: input,
+      steps,
+      approvalMode: input.approvalMode ?? defaultApprovalMode,
+    });
+
     return {
       taskName: input.taskName,
-      approvalMode: input.approvalMode ?? defaultApprovalMode,
-      metadata: input.metadata,
-      steps,
+      approvalMode: normalizedCodeTask.approvalMode,
+      metadata: normalizedCodeTask.metadata,
+      steps: normalizedCodeTask.steps,
     };
   }
 }

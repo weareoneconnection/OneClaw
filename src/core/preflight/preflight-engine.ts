@@ -196,6 +196,35 @@ export class PreflightEngine {
       ];
     }
 
+    if (action.startsWith("code.")) {
+      const workspacePath = typeof input.workspacePath === "string" ? input.workspacePath : "";
+      const checks: PreflightCheck[] = [];
+      if (workspacePath) {
+        const codeRoots = this.config.codeWorkspaceAllowlist.length
+          ? this.config.codeWorkspaceAllowlist
+          : [process.cwd()];
+        checks.push(check(
+          `sandbox:code-workspace:${stepId}`,
+          pathMatchesAllowlist(workspacePath, codeRoots) ? "pass" : "fail",
+          "Code workspace sandbox",
+          this.config.codeWorkspaceAllowlist.length
+            ? `Workspace must stay inside: ${this.config.codeWorkspaceAllowlist.join(", ")}`
+            : "No code workspace allowlist configured; only the OneClaw process workspace is allowed.",
+        ));
+      }
+      checks.push(check(
+        `sandbox:code-limits:${stepId}`,
+        ["code.patch.apply", "code.test.run", "code.patch.rollback", "code.pr.create"].includes(action) ? "warn" : "pass",
+        "Code resource sandbox",
+        `Maximum ${this.config.codeMaxFiles} files, ${this.config.codeMaxFileBytes} bytes per file, ` +
+          `${this.config.codeMaxTotalBytes} total bytes, ${this.config.codeTimeoutMs}ms timeout; ` +
+          (action === "code.test.run"
+            ? "network is disabled and only approved package.json validation scripts may run."
+            : "network and arbitrary shell execution are disabled."),
+      ));
+      return checks;
+    }
+
     return [];
   }
 }

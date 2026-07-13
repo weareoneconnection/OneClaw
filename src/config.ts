@@ -35,6 +35,11 @@ export interface AppConfig {
   desktopEnabled: boolean;
   desktopAppAllowlist: string[];
   desktopAppBlocklist: string[];
+  codeWorkspaceAllowlist: string[];
+  codeMaxFiles: number;
+  codeMaxFileBytes: number;
+  codeMaxTotalBytes: number;
+  codeTimeoutMs: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -75,6 +80,13 @@ export function loadConfig(): AppConfig {
     desktopEnabled: process.env.ONECLAW_DESKTOP_ENABLED === "true",
     desktopAppAllowlist: splitList(process.env.ONECLAW_DESKTOP_APP_ALLOWLIST),
     desktopAppBlocklist: splitList(process.env.ONECLAW_DESKTOP_APP_BLOCKLIST),
+    codeWorkspaceAllowlist: splitList(
+      process.env.ONECLAW_CODE_WORKSPACE_ALLOWLIST || process.env.ONECLAW_WORKSPACE_ALLOWLIST
+    ),
+    codeMaxFiles: Number(process.env.ONECLAW_CODE_MAX_FILES ?? 40),
+    codeMaxFileBytes: Number(process.env.ONECLAW_CODE_MAX_FILE_BYTES ?? 512000),
+    codeMaxTotalBytes: Number(process.env.ONECLAW_CODE_MAX_TOTAL_BYTES ?? 4000000),
+    codeTimeoutMs: Number(process.env.ONECLAW_CODE_TIMEOUT_MS ?? 60000),
   };
 }
 

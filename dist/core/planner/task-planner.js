@@ -1,3 +1,4 @@
+import { normalizeCodeTask } from "./code-task-contract.js";
 export class TaskPlanner {
     normalize(input, defaultApprovalMode) {
         const seen = new Set();
@@ -19,11 +20,16 @@ export class TaskPlanner {
                     throw new Error(`Unknown dependency '${dep}' for step '${step.id}'`);
             }
         }
+        const normalizedCodeTask = normalizeCodeTask({
+            task: input,
+            steps,
+            approvalMode: input.approvalMode ?? defaultApprovalMode,
+        });
         return {
             taskName: input.taskName,
-            approvalMode: input.approvalMode ?? defaultApprovalMode,
-            metadata: input.metadata,
-            steps,
+            approvalMode: normalizedCodeTask.approvalMode,
+            metadata: normalizedCodeTask.metadata,
+            steps: normalizedCodeTask.steps,
         };
     }
 }

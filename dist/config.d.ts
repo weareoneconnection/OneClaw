@@ -35,5 +35,10 @@ export interface AppConfig {
     desktopEnabled: boolean;
     desktopAppAllowlist: string[];
     desktopAppBlocklist: string[];
+    codeWorkspaceAllowlist: string[];
+    codeMaxFiles: number;
+    codeMaxFileBytes: number;
+    codeMaxTotalBytes: number;
+    codeTimeoutMs: number;
 }
 export declare function loadConfig(): AppConfig;

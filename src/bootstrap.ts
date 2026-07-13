@@ -70,9 +70,19 @@ function enrichCapability(registration: CapabilityRegistration): CapabilityRegis
     approvalRequired:
       registration.risk === "high" ||
       registration.risk === "critical" ||
-      ["message.send", "social.post", "file.write", "file.append", "file.delete", "code.patch.apply"].includes(registration.action),
+      [
+        "message.send",
+        "social.post",
+        "file.write",
+        "file.append",
+        "file.delete",
+        "code.patch.apply",
+        "code.test.run",
+        "code.patch.rollback",
+        "code.pr.create",
+      ].includes(registration.action),
     supportsDryRun: ["social.post", "message.send", "api.request", "api.webhook", "file.write", "file.append", "code.diff.prepare"].includes(registration.action),
-    supportsRollback: ["file.write", "file.append", "code.patch.apply"].includes(registration.action),
+    supportsRollback: ["file.write", "file.append", "code.patch.apply", "code.patch.rollback"].includes(registration.action),
     inputSchema: {
       required,
       properties: {},
@@ -130,6 +140,11 @@ function requiredInputForAction(action: string): string[] {
   if (action === "code.workspace.status") return [];
   if (action === "code.diff.prepare") return ["files"];
   if (action === "code.patch.apply") return ["files"];
+  if (action === "code.test.run") return [];
+  if (action === "code.verify") return [];
+  if (action === "code.patch.rollback") return ["rollbackToken"];
+  if (action === "code.commit.prepare") return [];
+  if (action === "code.pr.create") return ["repo", "title", "branch"];
   if (action === "device.status.read") return ["deviceId"];
   if (action === "device.command.prepare") return ["deviceId", "command"];
   if (action === "iot.sensor.read") return ["sensorId"];
@@ -996,7 +1011,85 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
           files: "array",
         },
       },
-      outputContract: ["status", "workspacePath", "changedFiles", "diff"] as string[],
+      outputContract: ["status", "workspacePath", "changedFiles", "diff", "rollbackToken"] as string[],
+    },
+    {
+      action: "code.test.run",
+      workerName: "code_worker",
+      risk: "high",
+      description: "Run approved package validation scripts inside the code sandbox",
+      approvalRequired: true,
+      inputSchema: {
+        required: [] as string[],
+        properties: {
+          workspacePath: "string",
+          scripts: "array",
+        },
+      },
+      outputContract: ["status", "workspacePath", "passed", "results", "elapsedMs"] as string[],
+    },
+    {
+      action: "code.verify",
+      workerName: "code_worker",
+      risk: "low",
+      description: "Verify repository state and patch integrity without changing files",
+      approvalRequired: false,
+      inputSchema: {
+        required: [] as string[],
+        properties: {
+          workspacePath: "string",
+        },
+      },
+      outputContract: ["status", "workspacePath", "passed", "gitStatus", "diffStat", "diffCheck"] as string[],
+    },
+    {
+      action: "code.patch.rollback",
+      workerName: "code_worker",
+      risk: "high",
+      description: "Restore files from an approved OneClaw rollback bundle",
+      approvalRequired: true,
+      supportsRollback: true,
+      inputSchema: {
+        required: ["rollbackToken"] as string[],
+        properties: {
+          workspacePath: "string",
+          rollbackToken: "string",
+        },
+      },
+      outputContract: ["status", "workspacePath", "rollbackToken", "restoredFiles"] as string[],
+    },
+    {
+      action: "code.commit.prepare",
+      workerName: "code_worker",
+      risk: "medium",
+      description: "Prepare a commit delivery package without committing",
+      approvalRequired: false,
+      inputSchema: {
+        required: [] as string[],
+        properties: {
+          workspacePath: "string",
+          message: "string",
+        },
+      },
+      outputContract: ["status", "workspacePath", "branch", "message", "gitStatus", "diffStat", "ready"] as string[],
+    },
+    {
+      action: "code.pr.create",
+      workerName: "code_worker",
+      risk: "high",
+      description: "Prepare an approval-gated pull request delivery action",
+      approvalRequired: true,
+      inputSchema: {
+        required: ["repo", "title", "branch"] as string[],
+        properties: {
+          repo: "string",
+          title: "string",
+          branch: "string",
+          base: "string",
+          body: "string",
+        },
+      },
+      outputContract: ["status", "repo", "title", "branch", "base", "approvalRequired"] as string[],
     },
 
     // Universal OS Worker Pack: device and IoT

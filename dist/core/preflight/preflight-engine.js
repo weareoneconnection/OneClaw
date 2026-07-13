@@ -134,6 +134,21 @@ export class PreflightEngine {
                 check(`sandbox:shell:${stepId}`, this.config.shellEnabled ? "warn" : "fail", "Shell sandbox", this.config.shellEnabled ? "Shell is enabled and must remain approval gated." : "Shell execution is disabled by default."),
             ];
         }
+        if (action.startsWith("code.")) {
+            const workspacePath = typeof input.workspacePath === "string" ? input.workspacePath : "";
+            const checks = [];
+            if (workspacePath) {
+                const codeRoots = this.config.codeWorkspaceAllowlist.length
+                    ? this.config.codeWorkspaceAllowlist
+                    : [process.cwd()];
+                checks.push(check(`sandbox:code-workspace:${stepId}`, pathMatchesAllowlist(workspacePath, codeRoots) ? "pass" : "fail", "Code workspace sandbox", this.config.codeWorkspaceAllowlist.length
+                    ? `Workspace must stay inside: ${this.config.codeWorkspaceAllowlist.join(", ")}`
+                    : "No code workspace allowlist configured; only the OneClaw process workspace is allowed."));
+            }
+            checks.push(check(`sandbox:code-limits:${stepId}`, action === "code.patch.apply" ? "warn" : "pass", "Code resource sandbox", `Maximum ${this.config.codeMaxFiles} files, ${this.config.codeMaxFileBytes} bytes per file, ` +
+                `${this.config.codeMaxTotalBytes} total bytes, ${this.config.codeTimeoutMs}ms timeout; network and shell are disabled.`));
+            return checks;
+        }
         return [];
     }
 }

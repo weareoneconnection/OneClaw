@@ -36,6 +36,11 @@ export function loadConfig() {
         desktopEnabled: process.env.ONECLAW_DESKTOP_ENABLED === "true",
         desktopAppAllowlist: splitList(process.env.ONECLAW_DESKTOP_APP_ALLOWLIST),
         desktopAppBlocklist: splitList(process.env.ONECLAW_DESKTOP_APP_BLOCKLIST),
+        codeWorkspaceAllowlist: splitList(process.env.ONECLAW_CODE_WORKSPACE_ALLOWLIST || process.env.ONECLAW_WORKSPACE_ALLOWLIST),
+        codeMaxFiles: Number(process.env.ONECLAW_CODE_MAX_FILES ?? 40),
+        codeMaxFileBytes: Number(process.env.ONECLAW_CODE_MAX_FILE_BYTES ?? 512000),
+        codeMaxTotalBytes: Number(process.env.ONECLAW_CODE_MAX_TOTAL_BYTES ?? 4000000),
+        codeTimeoutMs: Number(process.env.ONECLAW_CODE_TIMEOUT_MS ?? 60000),
     };
 }
 function splitList(value) {

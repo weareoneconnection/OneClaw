@@ -1,8 +1,13 @@
 import path from "node:path";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import type { ExecutionContext, Worker, WorkerExecutionResult } from "../../types/capability.js";
 import type { Json } from "../../types/task.js";
 import type { GitHubAdapter } from "../../adapters/github/github-adapter.js";
+
+const execFileAsync = promisify(execFile);
 
 function asString(value: Json | undefined): string {
   return String(value ?? "").trim();
@@ -31,6 +36,106 @@ function normalizeWorkspaceRoots() {
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => path.resolve(item));
+}
+
+function positiveNumber(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sandboxLimits() {
+  return {
+    maxFiles: positiveNumber(process.env.ONECLAW_CODE_MAX_FILES, 40),
+    maxFileBytes: positiveNumber(process.env.ONECLAW_CODE_MAX_FILE_BYTES, 512_000),
+    maxTotalBytes: positiveNumber(process.env.ONECLAW_CODE_MAX_TOTAL_BYTES, 4_000_000),
+    timeoutMs: positiveNumber(process.env.ONECLAW_CODE_TIMEOUT_MS, 60_000),
+    networkEgress: "none",
+    commandExecution: "approved_package_scripts_only",
+  };
+}
+
+const SAFE_VALIDATION_SCRIPTS = new Set([
+  "check",
+  "lint",
+  "test",
+  "typecheck",
+  "type-check",
+  "build",
+]);
+
+function rollbackDirectory(workspacePath: string) {
+  return path.join(workspacePath, ".oneclaw", "rollback");
+}
+
+async function runWorkspaceCommand(
+  workspacePath: string,
+  command: string,
+  args: string[],
+  timeoutMs: number
+) {
+  const commandEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => (
+      !/(TOKEN|SECRET|PASSWORD|API_KEY|DATABASE_URL|AUTH|COOKIE|CREDENTIAL)/i.test(key)
+    ))
+  );
+  const result = await execFileAsync(command, args, {
+    cwd: workspacePath,
+    timeout: timeoutMs,
+    maxBuffer: 2_000_000,
+    env: {
+      ...commandEnv,
+      CI: "1",
+      NO_COLOR: "1",
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_offline: "true",
+      npm_config_update_notifier: "false",
+      ONECLAW_SANDBOX_NETWORK: "none",
+    },
+  });
+  return {
+    stdout: String(result.stdout || "").slice(-80_000),
+    stderr: String(result.stderr || "").slice(-80_000),
+  };
+}
+
+async function gitOutput(workspacePath: string, args: string[], timeoutMs: number) {
+  return runWorkspaceCommand(workspacePath, "git", args, timeoutMs);
+}
+
+async function availablePackageScripts(workspacePath: string) {
+  const packagePath = path.join(workspacePath, "package.json");
+  const raw = await readFile(packagePath, "utf8");
+  const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
+  return parsed.scripts || {};
+}
+
+async function persistRollbackBundle(input: {
+  workspacePath: string;
+  taskId: string;
+  stepId: string;
+  files: Array<{ relativePath: string; before: string; existed: boolean }>;
+}) {
+  const token = `${Date.now()}-${randomUUID()}`;
+  const directory = path.join(rollbackDirectory(input.workspacePath), token);
+  await mkdir(directory, { recursive: true });
+  const manifest = {
+    version: 1,
+    token,
+    taskId: input.taskId,
+    stepId: input.stepId,
+    createdAt: new Date().toISOString(),
+    files: input.files.map((file, index) => ({
+      path: file.relativePath,
+      existed: file.existed,
+      backupFile: `${index}.txt`,
+    })),
+  };
+  await Promise.all(input.files.map((file, index) => (
+    writeFile(path.join(directory, `${index}.txt`), file.before, "utf8")
+  )));
+  await writeFile(path.join(directory, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+  return token;
 }
 
 function isInside(parent: string, child: string) {
@@ -86,6 +191,64 @@ function extractCodeFiles(input: Record<string, Json>) {
     }
     return { path: filePath, content };
   });
+}
+
+function validateCodeFiles(files: Array<{ path: string; content: string }>) {
+  const limits = sandboxLimits();
+  if (files.length > limits.maxFiles) {
+    throw new Error(`Code sandbox allows at most ${limits.maxFiles} files per task`);
+  }
+  let totalBytes = 0;
+  for (const file of files) {
+    const bytes = Buffer.byteLength(file.content, "utf8");
+    if (bytes > limits.maxFileBytes) {
+      throw new Error(`${file.path} exceeds the ${limits.maxFileBytes} byte code sandbox limit`);
+    }
+    totalBytes += bytes;
+  }
+  if (totalBytes > limits.maxTotalBytes) {
+    throw new Error(`Code task exceeds the ${limits.maxTotalBytes} byte total sandbox limit`);
+  }
+  return { ...limits, totalBytes };
+}
+
+function assertWithinTimeout(startedAt: number, timeoutMs: number) {
+  if (Date.now() - startedAt > timeoutMs) {
+    throw new Error(`Code sandbox timed out after ${timeoutMs}ms`);
+  }
+}
+
+async function nearestExistingParent(filePath: string) {
+  let current = filePath;
+  while (true) {
+    const exists = await stat(current).then(() => true).catch(() => false);
+    if (exists) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+async function ensureNoSymlinkEscape(workspacePath: string, absolutePath: string) {
+  const workspaceRealPath = await realpath(workspacePath);
+  const existingParent = await nearestExistingParent(path.dirname(absolutePath));
+  const parentRealPath = await realpath(existingParent);
+  if (!isInside(workspaceRealPath, parentRealPath)) {
+    throw new Error(`code file path escapes workspace through a symlink: ${absolutePath}`);
+  }
+  const exists = await fileExists(absolutePath);
+  if (exists) {
+    const fileRealPath = await realpath(absolutePath);
+    if (!isInside(workspaceRealPath, fileRealPath)) {
+      throw new Error(`code file resolves outside workspacePath: ${absolutePath}`);
+    }
+  }
+}
+
+async function atomicWrite(filePath: string, content: string, suffix: string) {
+  const temporaryPath = `${filePath}.oneclaw-${suffix}.tmp`;
+  await writeFile(temporaryPath, content, "utf8");
+  await rename(temporaryPath, filePath);
 }
 
 async function readExistingText(filePath: string) {
@@ -174,6 +337,7 @@ export class CodeWorker implements Worker {
             exists,
             allowed: true,
             allowedRoots,
+            sandbox: sandboxLimits(),
           },
         };
       } catch (error) {
@@ -183,14 +347,18 @@ export class CodeWorker implements Worker {
 
     if (context.action === "code.diff.prepare") {
       try {
+        const startedAt = Date.now();
         const { workspacePath } = resolveWorkspace(input);
         const files = extractCodeFiles(input);
         if (!files.length) return { ok: false, error: "code.diff.prepare requires input.files[]" };
+        const sandbox = validateCodeFiles(files);
 
         const prepared = [];
         const diffs = [];
         for (const file of files) {
+          assertWithinTimeout(startedAt, sandbox.timeoutMs);
           const resolved = resolveWorkspaceFile(workspacePath, file.path);
+          await ensureNoSymlinkEscape(workspacePath, resolved.absolutePath);
           const before = await readExistingText(resolved.absolutePath);
           const exists = await fileExists(resolved.absolutePath);
           const diff = buildLineDiff(resolved.relativePath, before, file.content);
@@ -214,6 +382,11 @@ export class CodeWorker implements Worker {
             files: prepared,
             diff: diffs.join("\n"),
             applyReady: true,
+            sandbox: {
+              ...sandbox,
+              filesystem: "read_only",
+              elapsedMs: Date.now() - startedAt,
+            },
           },
         };
       } catch (error) {
@@ -223,25 +396,73 @@ export class CodeWorker implements Worker {
 
     if (context.action === "code.patch.apply") {
       try {
+        const startedAt = Date.now();
         const { workspacePath } = resolveWorkspace(input);
         const files = extractCodeFiles(input);
         if (!files.length) return { ok: false, error: "code.patch.apply requires input.files[]" };
+        const sandbox = validateCodeFiles(files);
 
         const changedFiles = [];
         const diffs = [];
+        const backups: Array<{ absolutePath: string; relativePath: string; before: string; existed: boolean }> = [];
         for (const file of files) {
+          assertWithinTimeout(startedAt, sandbox.timeoutMs);
           const resolved = resolveWorkspaceFile(workspacePath, file.path);
+          await ensureNoSymlinkEscape(workspacePath, resolved.absolutePath);
+          const existed = await fileExists(resolved.absolutePath);
           const before = await readExistingText(resolved.absolutePath);
-          const diff = buildLineDiff(resolved.relativePath, before, file.content);
-          await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
-          await writeFile(resolved.absolutePath, file.content, "utf8");
-          diffs.push(diff);
-          changedFiles.push({
-            path: resolved.relativePath,
-            changed: before !== file.content,
-            beforeLength: before.length,
-            afterLength: file.content.length,
+          backups.push({
+            absolutePath: resolved.absolutePath,
+            relativePath: resolved.relativePath,
+            before,
+            existed,
           });
+        }
+
+        const rollbackToken = await persistRollbackBundle({
+          workspacePath,
+          taskId: context.taskId,
+          stepId: context.stepId,
+          files: backups.map((backup) => ({
+            relativePath: backup.relativePath,
+            before: backup.before,
+            existed: backup.existed,
+          })),
+        });
+
+        try {
+          for (const [index, file] of files.entries()) {
+            assertWithinTimeout(startedAt, sandbox.timeoutMs);
+            const backup = backups[index];
+            const resolved = {
+              absolutePath: backup.absolutePath,
+              relativePath: backup.relativePath,
+            };
+            const before = backup.before;
+            const diff = buildLineDiff(resolved.relativePath, before, file.content);
+            await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
+            await atomicWrite(
+              resolved.absolutePath,
+              file.content,
+              `${context.taskId}-${context.stepId}-${index}`.replace(/[^a-zA-Z0-9_-]/g, "-")
+            );
+            diffs.push(diff);
+            changedFiles.push({
+              path: resolved.relativePath,
+              changed: before !== file.content,
+              beforeLength: before.length,
+              afterLength: file.content.length,
+            });
+          }
+        } catch (error) {
+          for (const backup of backups.reverse()) {
+            if (backup.existed) {
+              await writeFile(backup.absolutePath, backup.before, "utf8").catch(() => undefined);
+            } else {
+              await rm(backup.absolutePath, { force: true }).catch(() => undefined);
+            }
+          }
+          throw error;
         }
 
         return {
@@ -253,11 +474,202 @@ export class CodeWorker implements Worker {
             workspacePath,
             changedFiles,
             diff: diffs.join("\n"),
+            rollbackToken,
+            sandbox: {
+              ...sandbox,
+              filesystem: "read_write_approved",
+              atomicWrites: true,
+              rollback: "automatic_on_failure_and_tokenized_restore",
+              elapsedMs: Date.now() - startedAt,
+            },
           },
         };
       } catch (error) {
         return { ok: false, error: (error as Error).message };
       }
+    }
+
+    if (context.action === "code.test.run") {
+      try {
+        const startedAt = Date.now();
+        const { workspacePath } = resolveWorkspace(input);
+        const sandbox = sandboxLimits();
+        const packageScripts = await availablePackageScripts(workspacePath);
+        const requested = asJsonArray(input.scripts).map((item) => asString(item));
+        const scripts = (requested.length ? requested : ["check", "typecheck", "lint", "test", "build"])
+          .filter((script, index, values) => values.indexOf(script) === index)
+          .filter((script) => SAFE_VALIDATION_SCRIPTS.has(script) && Boolean(packageScripts[script]))
+          .slice(0, 4);
+        if (!scripts.length) {
+          return {
+            ok: false,
+            error: "No approved validation script was found in package.json (check, typecheck, lint, test, build)",
+          };
+        }
+
+        const results: Array<Record<string, Json>> = [];
+        for (const script of scripts) {
+          assertWithinTimeout(startedAt, sandbox.timeoutMs);
+          const remaining = Math.max(1_000, sandbox.timeoutMs - (Date.now() - startedAt));
+          try {
+            const output = await runWorkspaceCommand(workspacePath, "npm", ["run", script], remaining);
+            results.push({ script, status: "passed", ...output });
+          } catch (error) {
+            const failure = error as Error & { stdout?: string; stderr?: string; code?: number };
+            results.push({
+              script,
+              status: "failed",
+              stdout: String(failure.stdout || "").slice(-80_000),
+              stderr: String(failure.stderr || failure.message).slice(-80_000),
+              exitCode: Number(failure.code || 1),
+            });
+            break;
+          }
+        }
+        const passed = results.every((result) => result.status === "passed");
+        return {
+          ok: passed,
+          error: passed ? undefined : "One or more approved validation scripts failed",
+          output: {
+            provider: "code",
+            action: context.action,
+            status: passed ? "tests_passed" : "tests_failed",
+            workspacePath,
+            passed,
+            results,
+            elapsedMs: Date.now() - startedAt,
+            sandbox: { ...sandbox, commandExecution: "approved_package_scripts_only" },
+          },
+        };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
+    if (context.action === "code.verify") {
+      try {
+        const { workspacePath } = resolveWorkspace(input);
+        const timeoutMs = sandboxLimits().timeoutMs;
+        const [statusResult, statResult] = await Promise.all([
+          gitOutput(workspacePath, ["status", "--short", "--branch"], timeoutMs),
+          gitOutput(workspacePath, ["diff", "--stat"], timeoutMs),
+        ]);
+        let diffCheck = { passed: true, output: "" };
+        try {
+          const result = await gitOutput(workspacePath, ["diff", "--check"], timeoutMs);
+          diffCheck = { passed: true, output: result.stdout || result.stderr };
+        } catch (error) {
+          diffCheck = { passed: false, output: (error as Error).message };
+        }
+        return {
+          ok: diffCheck.passed,
+          error: diffCheck.passed ? undefined : "git diff --check reported invalid whitespace or conflict markers",
+          output: {
+            provider: "code",
+            action: context.action,
+            status: diffCheck.passed ? "verification_passed" : "verification_failed",
+            workspacePath,
+            passed: diffCheck.passed,
+            gitStatus: statusResult.stdout,
+            diffStat: statResult.stdout,
+            diffCheck,
+          },
+        };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
+    if (context.action === "code.patch.rollback") {
+      try {
+        const { workspacePath } = resolveWorkspace(input);
+        const rollbackToken = asString(input.rollbackToken);
+        if (!rollbackToken || !/^[a-zA-Z0-9-]+$/.test(rollbackToken)) {
+          return { ok: false, error: "code.patch.rollback requires a valid input.rollbackToken" };
+        }
+        const directory = path.join(rollbackDirectory(workspacePath), rollbackToken);
+        const manifestRaw = await readFile(path.join(directory, "manifest.json"), "utf8");
+        const manifest = JSON.parse(manifestRaw) as {
+          files?: Array<{ path: string; existed: boolean; backupFile: string }>;
+        };
+        const restored: string[] = [];
+        for (const file of manifest.files || []) {
+          const resolved = resolveWorkspaceFile(workspacePath, file.path);
+          await ensureNoSymlinkEscape(workspacePath, resolved.absolutePath);
+          if (file.existed) {
+            const before = await readFile(path.join(directory, file.backupFile), "utf8");
+            await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
+            await atomicWrite(resolved.absolutePath, before, `${rollbackToken}-restore`);
+          } else {
+            await rm(resolved.absolutePath, { force: true });
+          }
+          restored.push(resolved.relativePath);
+        }
+        return {
+          ok: true,
+          output: {
+            provider: "code",
+            action: context.action,
+            status: "patch_rolled_back",
+            workspacePath,
+            rollbackToken,
+            restoredFiles: restored,
+          },
+        };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
+    if (context.action === "code.commit.prepare") {
+      try {
+        const { workspacePath } = resolveWorkspace(input);
+        const timeoutMs = sandboxLimits().timeoutMs;
+        const [branch, statusResult, statResult] = await Promise.all([
+          gitOutput(workspacePath, ["branch", "--show-current"], timeoutMs),
+          gitOutput(workspacePath, ["status", "--short"], timeoutMs),
+          gitOutput(workspacePath, ["diff", "--stat"], timeoutMs),
+        ]);
+        const message = asString(input.message || input.commitMessage) || "Update code through TheOne";
+        return {
+          ok: true,
+          output: {
+            provider: "code",
+            action: context.action,
+            status: "commit_prepared",
+            workspacePath,
+            branch: branch.stdout.trim(),
+            message,
+            gitStatus: statusResult.stdout,
+            diffStat: statResult.stdout,
+            ready: Boolean(statusResult.stdout.trim()),
+          },
+        };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
+    if (context.action === "code.pr.create") {
+      const title = asString(input.title);
+      const branch = asString(input.branch || input.head);
+      if (!repo || !title || !branch) {
+        return { ok: false, error: "code.pr.create requires input.repo, input.title, and input.branch" };
+      }
+      return {
+        ok: true,
+        output: {
+          provider,
+          action: context.action,
+          status: "pull_request_prepared",
+          repo,
+          title,
+          branch,
+          base: asString(input.base || "main"),
+          body: asString(input.body),
+          approvalRequired: true,
+        },
+      };
     }
 
     if (context.action === "git.issue.create") {
