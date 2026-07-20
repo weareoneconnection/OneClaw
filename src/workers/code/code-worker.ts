@@ -179,6 +179,26 @@ function resolveWorkspaceFile(workspacePath: string, filePath: string) {
   };
 }
 
+// Planner file lists come in two flavors: full write payloads (entries carry
+// content/after/newContent) and path-only hints of what to touch. Only the
+// former can drive direct-write mode.
+function hasDirectWriteContent(input: Record<string, Json>) {
+  return asJsonArray(input.files || input.changes || input.patchFiles).some((item) => (
+    isRecord(item) && (
+      Object.prototype.hasOwnProperty.call(item, "content") ||
+      Object.prototype.hasOwnProperty.call(item, "after") ||
+      Object.prototype.hasOwnProperty.call(item, "newContent")
+    )
+  ));
+}
+
+function fileHintPaths(input: Record<string, Json>) {
+  return asJsonArray(input.files || input.changes || input.patchFiles)
+    .map((item) => (isRecord(item) ? asString(item.path || item.filePath || item.relativePath) : asString(item)))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 function extractCodeFiles(input: Record<string, Json>) {
   const rawFiles = asJsonArray(input.files || input.changes || input.patchFiles);
   return rawFiles.map((item, index) => {
@@ -440,11 +460,35 @@ export class CodeWorker implements Worker {
     }
 
     if (context.action === "code.diff.prepare") {
+      // Agent-mode plans carry an objective and path hints only — the real
+      // diff is produced by the agent run inside code.patch.apply.
+      const diffObjective = asString(input.objective || input.goal);
+      if (diffObjective && !hasDirectWriteContent(input)) {
+        try {
+          const { workspacePath } = resolveWorkspace(input);
+          return {
+            ok: true,
+            output: {
+              provider: "code",
+              action: context.action,
+              status: "diff_deferred_to_agent",
+              mode: "agent_engine",
+              workspacePath,
+              files: fileHintPaths(input).map((file) => ({ path: file, exists: true, changed: false })) as unknown as Json,
+              diff: "",
+              applyReady: true,
+              note: "Agent mode: the diff will be produced by the coding-agent run in code.patch.apply and returned in its receipt.",
+            },
+          };
+        } catch (error) {
+          return { ok: false, error: (error as Error).message };
+        }
+      }
       try {
         const startedAt = Date.now();
         const { workspacePath } = resolveWorkspace(input);
         const files = extractCodeFiles(input);
-        if (!files.length) return { ok: false, error: "code.diff.prepare requires input.files[]" };
+        if (!files.length) return { ok: false, error: "code.diff.prepare requires input.files[] or input.objective" };
         const sandbox = validateCodeFiles(files);
 
         const prepared = [];
@@ -489,11 +533,16 @@ export class CodeWorker implements Worker {
     }
 
     if (context.action === "code.patch.apply") {
-      // Agent mode: an objective and no pre-generated files[] hands the task
+      // Agent mode: an objective without real write payloads hands the task
       // to the self-hosted agent loop (explore → edit → verify in-workspace).
+      // Path-only files[] entries are treated as hints, not payloads.
       const objective = asString(input.objective || input.goal);
-      if (objective && !asJsonArray(input.files || input.changes || input.patchFiles).length) {
-        return this.runAgentObjective(objective, input, context);
+      if (objective && !hasDirectWriteContent(input)) {
+        const hints = fileHintPaths(input);
+        const objectiveWithHints = hints.length
+          ? `${objective}\n\nFiles likely involved: ${hints.join(", ")}`
+          : objective;
+        return this.runAgentObjective(objectiveWithHints, input, context);
       }
       try {
         const startedAt = Date.now();
