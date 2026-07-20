@@ -89,6 +89,11 @@ async function main() {
         recursive: true,
         filter: (source) => !source.includes(`${path.sep}node_modules${path.sep}`),
       });
+      // Fixtures are tracked as plain files; give the scratch copy its own
+      // git history so the engine's snapshot/rollback works.
+      for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.email=bench@local", "-c", "user.name=bench", "commit", "-qm", "fixture"]]) {
+        await execFileAsync("git", args, { cwd: scratch });
+      }
 
       const run = await runAgentTask({
         objective: task.objective,

@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { bootstrap } from "./bootstrap.js";
 import { createServer } from "./api/server.js";
+import { bootstrapWorkspaces } from "./workers/code/agent-engine/workspace-bootstrap.js";
 
+await bootstrapWorkspaces();
 const services = await bootstrap();
 const app = createServer(services);
 
