@@ -6,6 +6,7 @@ import {
   taskListSchema,
 } from "../schemas.js";
 import { redactJson } from "../../security/redact.js";
+import { abortAgentRun, isAgentRunActive, listActiveAgentRuns } from "../../workers/code/agent-engine/run-registry.js";
 
 function idempotencyKey(req: Request, body: { metadata?: Record<string, unknown> }) {
   const header = req.header("idempotency-key") || req.header("x-idempotency-key");
@@ -27,6 +28,22 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
       console.error("[/health] error =", error);
       return res.status(500).json({ ok: false, error: message });
     }
+  });
+
+  // Live agent runs: list and abort. Aborting returns the run as
+  // status=aborted; workspace edits stay and remain rollback-able.
+  app.get("/v1/agent-runs", async (_req: Request, res: Response) => {
+    return res.json({ ok: true, running: listActiveAgentRuns() });
+  });
+
+  app.post("/v1/tasks/:id/agent/abort", async (req: Request, res: Response) => {
+    const taskId = String(req.params.id || "").trim();
+    if (!taskId) return res.status(400).json({ ok: false, error: "task id is required" });
+    if (!isAgentRunActive(taskId)) {
+      return res.status(404).json({ ok: false, error: `No live agent run for task ${taskId}` });
+    }
+    const aborted = abortAgentRun(taskId);
+    return res.json({ ok: aborted, taskId, aborted });
   });
 
   app.post("/v1/tasks/run", async (req: Request, res: Response) => {

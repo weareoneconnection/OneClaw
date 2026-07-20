@@ -70,6 +70,22 @@ curl -X POST http://localhost:4100/v1/actions/execute \
 
 4. 不满意就回滚:`code.patch.rollback` + `rollbackToken: <snapshotCommit>`。
 
+## 运行时能力(Phase 4.5 第二批)
+
+- **Prompt caching**:tools/system/对话尾部三个 `cache_control` 断点,循环里的历史前缀按缓存价计费(约 1/10),usage 里的 `cacheReadInputTokens` 可见命中量。
+- **实时进度**:引擎每个事件写任务日志(`[agent:tool_call] …`),聊天页/Admin UI 轮询 `GET /v1/tasks/:id` 即可看到滚动过程;`GET /v1/agent-runs` 列出所有活跃 run。
+- **中断**:`POST /v1/tasks/:id/agent/abort` 立即停止循环,run 以 `aborted` 结束;已做的修改保留,可用 snapshotCommit 回滚。
+- **验证门禁(软)**:completed 但整个 run 没跑过任何 test/lint/build/typecheck 命令时,receipt 标 `verified: false`,任务状态为 `agent_run_completed_unverified`。
+- **会话连续性**:每次 run 结束把摘要写进 workspace 的 `.oneclaw/agent-session.json`(24h 有效);下一次 run 自动注入 system prompt,跳过冷启动探索。传 `input.freshSession: true` 可强制冷启动。
+
+## 基准测试
+
+```bash
+npm run bench:agent -- path/to/tasks.json
+```
+
+任务文件是 JSON 数组:`{name, workspace(fixture 仓路径), objective, verify(判分命令,exit 0 = 通过), maxTurns?}`。每题复制 fixture 到临时目录跑引擎,再用 `verify` 判分,输出通过率 + token 总量的 JSON 报告。引擎每次改动后重跑同一套题,看分数变化。
+
 ## 安全边界
 
 - 所有文件操作路径强制限制在 workspace 内(`../` 与 symlink 逃逸均拒绝)。

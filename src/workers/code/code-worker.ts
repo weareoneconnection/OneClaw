@@ -9,6 +9,8 @@ import type { GitHubAdapter } from "../../adapters/github/github-adapter.js";
 import { buildAgentReceipt, runAgentTask } from "./agent-engine/loop.js";
 import { getAgentEngineConfig } from "./agent-engine/llm-client.js";
 import { rollbackWorkspace } from "./agent-engine/workspace.js";
+import { registerAgentRun, releaseAgentRun } from "./agent-engine/run-registry.js";
+import { readPriorContext, writeSessionRecord } from "./agent-engine/session.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -339,14 +341,31 @@ export class CodeWorker implements Worker {
 
       const startedAt = new Date().toISOString();
       await context.log(`Agent engine run starting in ${workspacePath}`);
-      const result = await runAgentTask({
-        objective,
-        workspace: workspacePath,
-        maxTurns: positiveNumber(process.env.AGENT_ENGINE_MAX_TURNS, 50),
-        maxToolCalls: positiveNumber(process.env.AGENT_ENGINE_MAX_TOOL_CALLS, 200),
-        model: asString(input.model) || undefined,
-        snapshot: true,
-      });
+      const priorContext = input.freshSession === true ? null : await readPriorContext(workspacePath);
+      if (priorContext) await context.log("Agent engine resuming with previous session context.");
+
+      // Live progress: every engine event lands in the task log so the chat
+      // page can poll it while the run is still going.
+      const controller = registerAgentRun(context.taskId);
+      let result;
+      try {
+        result = await runAgentTask({
+          objective,
+          workspace: workspacePath,
+          maxTurns: positiveNumber(process.env.AGENT_ENGINE_MAX_TURNS, 50),
+          maxToolCalls: positiveNumber(process.env.AGENT_ENGINE_MAX_TOOL_CALLS, 200),
+          model: asString(input.model) || undefined,
+          snapshot: true,
+          priorContext: priorContext || undefined,
+          signal: controller.signal,
+          onEvent: (event) => {
+            void context.log(`[agent:${event.type}] ${event.detail.slice(0, 300)}`);
+          },
+        });
+      } finally {
+        releaseAgentRun(context.taskId);
+      }
+      await writeSessionRecord(workspacePath, objective, result);
       const receipt = await buildAgentReceipt(result, workspacePath, {
         startedAt,
         finishedAt: new Date().toISOString(),
@@ -362,7 +381,10 @@ export class CodeWorker implements Worker {
         output: {
           provider: "code",
           action: context.action,
-          status: succeeded ? "agent_run_completed" : "agent_run_incomplete",
+          status: succeeded
+            ? result.verified ? "agent_run_completed" : "agent_run_completed_unverified"
+            : result.status === "aborted" ? "agent_run_aborted" : "agent_run_incomplete",
+          verified: result.verified,
           mode: "agent_engine",
           workspacePath,
           summary: result.summary,

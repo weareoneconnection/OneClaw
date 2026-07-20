@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "start:worker": "node dist/worker.js",
     "check": "tsc --noEmit -p tsconfig.json",
+    "bench:agent": "tsx src/tools/agent-bench.ts",
     "migrate": "tsx src/db/migrate.ts",
     "growth:x": "node dist/automation/x-growth/index.js",
     "dev:all": "npm run migrate && npm run dev"
