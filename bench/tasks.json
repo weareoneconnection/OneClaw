@@ -1,0 +1,58 @@
+[
+  {
+    "name": "notify-param-contract",
+    "workspace": "fixtures/notify-param-contract",
+    "objective": "src/dispatch.js 的 buildNotifyStep 违反了 message.notify 契约:契约要求 input 至少携带 text/reason/note 之一,但现在 event.reason 和 event.note 被丢弃,且 text 缺失时会放一个 undefined 进去。修复:只透传实际存在的字段(text/reason/note),不要往 input 里塞 undefined 字段。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "timeout-propagation",
+    "workspace": "fixtures/timeout-propagation",
+    "objective": "src/client.js 的 buildRequestOptions 忽略了调用方传入的 config.timeoutMs,永远返回默认 30000。修复:传了正数就用传入值,没传或非正数用默认值。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "failure-reason-propagation",
+    "workspace": "fixtures/failure-reason-propagation",
+    "objective": "src/runner.js 的 runStep 捕获异常后只返回 {success:false},失败原因丢了,下游没法排错。修复:失败时带上 reason 字段(error.message);成功结果里不要出现 reason 字段。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "schema-default-repair",
+    "workspace": "fixtures/schema-default-repair",
+    "objective": "src/validate.js 的 validateAnalysisInput 对缺失的 language 直接报错,导致大量本可修复的输入被拒。改为:language 缺失时默认 'zh',modules 缺失时默认 [](写进返回的 value 里);projectName 仍然必填;modules 传了但不是数组仍然报错。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "path-escape-guard",
+    "workspace": "fixtures/path-escape-guard",
+    "objective": "src/paths.js 的 resolveInside 用 startsWith 判断路径是否在 root 内,存在边界漏洞:'../data-evil/x.txt' 解析为 /tmp/data-evil/... 也能通过 startsWith('/tmp/data')。修复边界判断(root 本身或 root+路径分隔符开头才算在内)。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "truncate-safe",
+    "workspace": "fixtures/truncate-safe",
+    "objective": "src/truncate.js 的 truncate 按 UTF-16 code unit 硬切,会把 emoji 等代理对从中间切断,产生非法的孤立代理字符。修复:截断结果不得包含孤立代理(可以在切点向前退避),总长度(含省略号)不超过 max。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "retry-policy",
+    "workspace": "fixtures/retry-policy",
+    "objective": "src/retry.js 的 withRetry 对所有错误都重试,包括 401 invalid api key 这类不可重试错误(真实事故:配额错误被无脑重试烧钱)。修复:只有 error.retryable === true 或 error.status 为 429/5xx 时才重试,其他错误立即抛出;重试次数上限保持 attempts。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  },
+  {
+    "name": "usage-aggregate",
+    "workspace": "fixtures/usage-aggregate",
+    "objective": "src/usage.js 的 aggregateUsage 假设每个 step 都有完整的 usage 对象,遇到 usage 缺失/为 null/字段缺失就抛错或产生 NaN。修复:缺失一律按 0 计。运行 npm test 验证。不要修改 test.js(判分时会用原版覆盖)。",
+    "verify": "cp .golden/test.js test.js && npm test",
+    "maxTurns": 20
+  }
+]

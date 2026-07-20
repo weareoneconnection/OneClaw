@@ -73,8 +73,11 @@ async function main() {
     process.exit(1);
   }
 
-  const tasks = JSON.parse(await readFile(path.resolve(tasksFile), "utf8")) as BenchTask[];
+  const tasksPath = path.resolve(tasksFile);
+  const tasks = JSON.parse(await readFile(tasksPath, "utf8")) as BenchTask[];
   const results: BenchResult[] = [];
+  // Relative workspaces resolve against the tasks file, so the suite is portable.
+  const resolveWorkspace = (workspace: string) => path.resolve(path.dirname(tasksPath), workspace);
 
   for (const task of tasks) {
     const startedAt = Date.now();
@@ -82,7 +85,7 @@ async function main() {
     console.log(`\n=== ${task.name} ===`);
     try {
       // Fresh copy per run so fixtures stay pristine and runs are comparable.
-      await cp(task.workspace, scratch, {
+      await cp(resolveWorkspace(task.workspace), scratch, {
         recursive: true,
         filter: (source) => !source.includes(`${path.sep}node_modules${path.sep}`),
       });
