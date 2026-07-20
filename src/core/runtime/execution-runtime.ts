@@ -48,6 +48,30 @@ type RetryPolicy = {
   backoffMs: number;
 };
 
+// Deterministic failures: retrying cannot change the outcome, and each retry
+// burns time and quota. Transient ones (timeout, 5xx, rate limit) still retry.
+const NON_RETRYABLE_ERROR = new RegExp([
+  "ERR_NAME_NOT_RESOLVED",
+  "ERR_INVALID_URL",
+  "ENOTFOUND",
+  "getaddrinfo",
+  "\\b40[134]\\b",
+  "Bad credentials",
+  "invalid api key",
+  "unauthorized",
+  "forbidden",
+  "not found",
+  "is required",
+  "must be",
+  "invalid input",
+  "outside .*allowlist",
+  "escapes",
+].join("|"), "i");
+
+export function isNonRetryableError(message: string | undefined): boolean {
+  return Boolean(message) && NON_RETRYABLE_ERROR.test(String(message));
+}
+
 type RuntimeOptions = {
   defaultTimeoutMs: number;
   defaultRetry: RetryPolicy;
@@ -969,7 +993,11 @@ export class ExecutionRuntime {
       );
 
       const retryable = this.asRecord(result.output)?.retryable;
-      if (retryable === false) {
+      if (retryable === false || isNonRetryableError(lastError)) {
+        await this.taskStore.appendLog(
+          taskId,
+          `[${stepId}] not retrying: the failure is deterministic`,
+        );
         break;
       }
 
