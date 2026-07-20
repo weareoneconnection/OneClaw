@@ -393,7 +393,9 @@ export class CodeWorker implements Worker {
           diff: receipt.diff,
           diffStat: receipt.diffStat,
           changedFiles: result.editedFiles.map((file) => ({ path: file, changed: true })) as unknown as Json,
-          receipt: receipt as unknown as Json,
+          // Named agentReceipt because the task pipeline attaches its own
+          // generic `receipt` object to every step output.
+          agentReceipt: receipt as unknown as Json,
           rollbackToken: result.snapshotCommit,
           sandbox: {
             ...sandboxLimits(),

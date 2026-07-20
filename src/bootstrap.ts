@@ -1001,17 +1001,18 @@ export async function bootstrap(options?: { workerOnly?: boolean }) {
       action: "code.patch.apply",
       workerName: "code_worker",
       risk: "high",
-      description: "Apply an approved code patch to a workspace",
+      description: "Apply an approved code patch to a workspace (files[] = direct write, objective = agent engine run)",
       approvalRequired: true,
       supportsRollback: true,
       inputSchema: {
-        required: ["files"] as string[],
+        required: [] as string[],
         properties: {
           workspacePath: "string",
           files: "array",
+          objective: "string",
         },
       },
-      outputContract: ["status", "workspacePath", "changedFiles", "diff", "rollbackToken"] as string[],
+      outputContract: ["status", "workspacePath", "changedFiles", "diff", "rollbackToken", "receipt", "verified"] as string[],
     },
     {
       action: "code.test.run",
