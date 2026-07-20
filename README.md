@@ -7,6 +7,11 @@ Phase 4 adds four major upgrades on top of Phase 3:
 - approval admin console UI
 - task listing and operational APIs for admin workflows
 
+Phase 4.5 adds the self-hosted **Agent Engine**: `code.patch.apply` with an
+`objective` runs a real coding-agent loop (explore → edit → verify) inside the
+workspace sandbox, returning a `theone.agent_receipt.v1` with diff and token
+usage. See [docs/agent-engine.md](docs/agent-engine.md).
+
 ## Quick start
 
 ```bash

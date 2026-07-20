@@ -6,6 +6,9 @@ import { promisify } from "node:util";
 import type { ExecutionContext, Worker, WorkerExecutionResult } from "../../types/capability.js";
 import type { Json } from "../../types/task.js";
 import type { GitHubAdapter } from "../../adapters/github/github-adapter.js";
+import { buildAgentReceipt, runAgentTask } from "./agent-engine/loop.js";
+import { getAgentEngineConfig } from "./agent-engine/llm-client.js";
+import { rollbackWorkspace } from "./agent-engine/workspace.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -318,6 +321,73 @@ export class CodeWorker implements Worker {
 
   constructor(private readonly github?: GitHubAdapter) {}
 
+  // Runs the self-hosted agent loop against a workspace objective and returns
+  // a theone.agent_receipt.v1 (diff + commands + token usage) as proof.
+  private async runAgentObjective(
+    objective: string,
+    input: Record<string, Json>,
+    context: ExecutionContext
+  ): Promise<WorkerExecutionResult> {
+    try {
+      const { workspacePath } = resolveWorkspace(input);
+      if (!getAgentEngineConfig().apiKey) {
+        return {
+          ok: false,
+          error: "Agent engine is disabled: ANTHROPIC_API_KEY is not configured on this runtime",
+        };
+      }
+
+      const startedAt = new Date().toISOString();
+      await context.log(`Agent engine run starting in ${workspacePath}`);
+      const result = await runAgentTask({
+        objective,
+        workspace: workspacePath,
+        maxTurns: positiveNumber(process.env.AGENT_ENGINE_MAX_TURNS, 50),
+        maxToolCalls: positiveNumber(process.env.AGENT_ENGINE_MAX_TOOL_CALLS, 200),
+        model: asString(input.model) || undefined,
+        snapshot: true,
+      });
+      const receipt = await buildAgentReceipt(result, workspacePath, {
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      });
+      await context.log(
+        `Agent engine finished: ${result.status} (${result.turns} turns, ${result.toolCalls} tool calls, ${receipt.usage.inputTokens}+${receipt.usage.outputTokens} tokens)`
+      );
+
+      const succeeded = result.status === "completed";
+      return {
+        ok: succeeded,
+        error: succeeded ? undefined : `Agent run ended with status ${result.status}: ${result.summary.slice(0, 500)}`,
+        output: {
+          provider: "code",
+          action: context.action,
+          status: succeeded ? "agent_run_completed" : "agent_run_incomplete",
+          mode: "agent_engine",
+          workspacePath,
+          summary: result.summary,
+          // Top-level mirrors of the receipt so existing diff/status cards
+          // (theone.code_runtime.v2) render agent runs without changes.
+          diff: receipt.diff,
+          diffStat: receipt.diffStat,
+          changedFiles: result.editedFiles.map((file) => ({ path: file, changed: true })) as unknown as Json,
+          receipt: receipt as unknown as Json,
+          rollbackToken: result.snapshotCommit,
+          sandbox: {
+            ...sandboxLimits(),
+            filesystem: "read_write_approved",
+            commandExecution: "agent_workspace_shell",
+            rollback: result.snapshotCommit
+              ? "git_snapshot_commit"
+              : "unavailable_not_a_git_repo",
+          },
+        },
+      };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  }
+
   async execute(input: Record<string, Json>, context: ExecutionContext): Promise<WorkerExecutionResult> {
     await context.log(`CodeWorker executing ${context.action}`);
     const provider = asString(input.provider || "github");
@@ -395,11 +465,17 @@ export class CodeWorker implements Worker {
     }
 
     if (context.action === "code.patch.apply") {
+      // Agent mode: an objective and no pre-generated files[] hands the task
+      // to the self-hosted agent loop (explore → edit → verify in-workspace).
+      const objective = asString(input.objective || input.goal);
+      if (objective && !asJsonArray(input.files || input.changes || input.patchFiles).length) {
+        return this.runAgentObjective(objective, input, context);
+      }
       try {
         const startedAt = Date.now();
         const { workspacePath } = resolveWorkspace(input);
         const files = extractCodeFiles(input);
-        if (!files.length) return { ok: false, error: "code.patch.apply requires input.files[]" };
+        if (!files.length) return { ok: false, error: "code.patch.apply requires input.files[] or input.objective" };
         const sandbox = validateCodeFiles(files);
 
         const changedFiles = [];
@@ -587,7 +663,27 @@ export class CodeWorker implements Worker {
         if (!rollbackToken || !/^[a-zA-Z0-9-]+$/.test(rollbackToken)) {
           return { ok: false, error: "code.patch.rollback requires a valid input.rollbackToken" };
         }
+        // Agent-engine runs use a git snapshot commit as their rollback token.
         const directory = path.join(rollbackDirectory(workspacePath), rollbackToken);
+        const hasBundle = await stat(path.join(directory, "manifest.json")).then(() => true).catch(() => false);
+        if (!hasBundle && /^[0-9a-f]{7,40}$/.test(rollbackToken)) {
+          const restored = await rollbackWorkspace(workspacePath, rollbackToken);
+          if (!restored) {
+            return { ok: false, error: `git rollback to snapshot ${rollbackToken} failed` };
+          }
+          return {
+            ok: true,
+            output: {
+              provider: "code",
+              action: context.action,
+              status: "patch_rolled_back",
+              mode: "agent_engine",
+              workspacePath,
+              rollbackToken,
+              method: "git_checkout_snapshot",
+            },
+          };
+        }
         const manifestRaw = await readFile(path.join(directory, "manifest.json"), "utf8");
         const manifest = JSON.parse(manifestRaw) as {
           files?: Array<{ path: string; existed: boolean; backupFile: string }>;

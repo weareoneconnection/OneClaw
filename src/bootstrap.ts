@@ -139,7 +139,7 @@ function requiredInputForAction(action: string): string[] {
   if (action === "git.repo.search") return ["query"];
   if (action === "code.workspace.status") return [];
   if (action === "code.diff.prepare") return ["files"];
-  if (action === "code.patch.apply") return ["files"];
+  if (action === "code.patch.apply") return []; // files[] (direct mode) or objective (agent mode)
   if (action === "code.test.run") return [];
   if (action === "code.verify") return [];
   if (action === "code.patch.rollback") return ["rollbackToken"];
