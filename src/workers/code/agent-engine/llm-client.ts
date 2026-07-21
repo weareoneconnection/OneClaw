@@ -15,10 +15,15 @@ export function getAgentEngineConfig() {
 type CacheControl = { type: "ephemeral" };
 const CACHE_CONTROL: CacheControl = { type: "ephemeral" };
 
+type ImageSource = { type: "base64"; media_type: string; data: string };
+type ToolResultContent =
+  | { type: "text"; text: string }
+  | { type: "image"; source: ImageSource };
+
 type AnthropicContentBlock =
   | { type: "text"; text: string; cache_control?: CacheControl }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown>; cache_control?: CacheControl }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean; cache_control?: CacheControl };
+  | { type: "tool_result"; tool_use_id: string; content: string | ToolResultContent[]; is_error?: boolean; cache_control?: CacheControl };
 
 type AnthropicMessage = { role: "user" | "assistant"; content: string | AnthropicContentBlock[] };
 
@@ -60,7 +65,16 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
         content: message.results.map((result) => ({
           type: "tool_result" as const,
           tool_use_id: result.toolCallId,
-          content: result.output,
+          // Attach any images as vision blocks alongside the text output.
+          content: result.images?.length
+            ? [
+                { type: "text" as const, text: result.output },
+                ...result.images.map((image) => ({
+                  type: "image" as const,
+                  source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
+                })),
+              ]
+            : result.output,
           ...(result.ok ? {} : { is_error: true }),
         })),
       });
