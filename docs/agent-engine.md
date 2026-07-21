@@ -86,6 +86,15 @@ npm run bench:agent -- path/to/tasks.json
 
 任务文件是 JSON 数组:`{name, workspace(fixture 仓路径), objective, verify(判分命令,exit 0 = 通过), maxTurns?}`。每题复制 fixture 到临时目录跑引擎,再用 `verify` 判分,输出通过率 + token 总量的 JSON 报告。引擎每次改动后重跑同一套题,看分数变化。
 
+## 读代码库 + PR 交付(Codex 式)
+
+- **仓库概览**:每次 run 启动时自动生成"目录树 + 技术栈 + npm 脚本 + README 摘要"注入首个提示(`repo-overview.ts`),引擎一开始就有鸟瞰,不用逐步探索。始终开启,零配置。
+- **PR-only 自动交付**(`git-deliver.ts`):**验证通过后**才触发,且必须显式开启。引擎会 commit 到全新的 `theone-agent/*` 分支 → push → 用 GitHub API 开 PR。**永不 push 保护分支(main/master/…)、永不 force、永不合并**——合并(= 触发部署)始终是人工动作。
+  - 触发:聊天里明确说"开 PR / 提交 PR / deliver",OneAI 规划器会给 `code.patch.apply` 设 `input.deliver=true`;普通修复请求默认只出本地 diff。
+  - 前置:runtime 配 `AGENT_GIT_TOKEN`(repo + PR 权限);未配则交付关闭,引擎仍产出可审阅的 diff。
+  - token 只在 `git-deliver.ts` 内部用于 push 和开 PR,从所有返回字符串里脱敏,模型看不到。
+  - 未验证的 run **不会**自动交付(receipt 里 `delivery.attempted=false`)。
+
 ## 安全边界
 
 - 所有文件操作路径强制限制在 workspace 内(`../` 与 symlink 逃逸均拒绝)。

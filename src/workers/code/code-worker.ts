@@ -377,6 +377,9 @@ export class CodeWorker implements Worker {
           model: asString(input.model) || undefined,
           snapshot: true,
           priorContext: priorContext || undefined,
+          // PR-only delivery is opt-in per task and off unless a git token is
+          // configured on this runtime.
+          deliver: input.deliver === true && Boolean(process.env.AGENT_GIT_TOKEN || process.env.GITHUB_TOKEN),
           signal: controller.signal,
           onEvent: (event) => {
             void context.log(`[agent:${event.type}] ${event.detail.slice(0, 300)}`);
@@ -416,6 +419,8 @@ export class CodeWorker implements Worker {
           // Named agentReceipt because the task pipeline attaches its own
           // generic `receipt` object to every step output.
           agentReceipt: receipt as unknown as Json,
+          delivery: (result.delivery ?? null) as unknown as Json,
+          prUrl: result.delivery?.prUrl || null,
           rollbackToken: result.snapshotCommit,
           sandbox: {
             ...sandboxLimits(),
