@@ -36,6 +36,42 @@ export function registerTaskRoutes(app: Express, services: AppServices): void {
     return res.json({ ok: true, running: listActiveAgentRuns() });
   });
 
+  // Discoverable workspaces: the repos the agent can actually open. Lists the
+  // immediate subdirectories of every allowlisted root so the chat UI can
+  // offer real paths instead of the user guessing a container path.
+  app.get("/v1/code/workspaces", async (_req: Request, res: Response) => {
+    try {
+      const fs = await import("node:fs/promises");
+      const nodePath = await import("node:path");
+      const roots = String(
+        process.env.ONECLAW_CODE_WORKSPACE_ALLOWLIST ||
+        process.env.ONECLAW_WORKSPACE_ALLOWLIST ||
+        ""
+      ).split(",").map((item) => item.trim()).filter(Boolean).map((item) => nodePath.resolve(item));
+
+      const workspaces: Array<{ path: string; name: string; isGit: boolean; hasPackageJson: boolean }> = [];
+      for (const root of roots) {
+        // The root itself may be a single repo.
+        const rootIsRepo = await fs.stat(nodePath.join(root, ".git")).then(() => true).catch(() => false)
+          || await fs.stat(nodePath.join(root, "package.json")).then(() => true).catch(() => false);
+        if (rootIsRepo) {
+          workspaces.push({ path: root, name: nodePath.basename(root), isGit: true, hasPackageJson: true });
+        }
+        const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+          const dir = nodePath.join(root, entry.name);
+          const isGit = await fs.stat(nodePath.join(dir, ".git")).then(() => true).catch(() => false);
+          const hasPackageJson = await fs.stat(nodePath.join(dir, "package.json")).then(() => true).catch(() => false);
+          if (isGit || hasPackageJson) workspaces.push({ path: dir, name: entry.name, isGit, hasPackageJson });
+        }
+      }
+      return res.json({ ok: true, roots, workspaces: workspaces.slice(0, 100) });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: (error as Error).message });
+    }
+  });
+
   app.post("/v1/tasks/:id/agent/abort", async (req: Request, res: Response) => {
     const taskId = String(req.params.id || "").trim();
     if (!taskId) return res.status(400).json({ ok: false, error: "task id is required" });
