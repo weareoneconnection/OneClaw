@@ -2,7 +2,7 @@
 // Tool schemas deliberately mirror Claude Code's observable tool behavior
 // (Read/Edit/Bash/Grep-Glob) so the model's training priors apply directly.
 
-export type ToolName = "read_file" | "edit_file" | "bash" | "search";
+export type ToolName = "read_file" | "edit_file" | "bash" | "search" | "write_file" | "multi_edit" | "web_fetch";
 
 export type ToolCall = {
   id: string;
